@@ -50,3 +50,4 @@ try {
 }
 
 export { authInstance as auth, firestoreInstance as firestore, isFirebaseConfigured };
+

@@ -134,3 +134,4 @@ export const userProfileSchema = z.object({
   ).default([]),
   availability: z.string().max(100).default('Flexible')
 });
+

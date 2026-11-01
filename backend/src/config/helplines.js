@@ -37,3 +37,4 @@ export const CRISIS_DISCLAIMER =
   "UniMate is an AI educational companion, NOT a doctor, therapist, or counsellor. " +
   "We cannot diagnose conditions or provide clinical crisis support. If you or someone you know is in distress, " +
   "please reach out to one of the trusted support services above or talk to a family member, teacher, or trusted person immediately.";
+
