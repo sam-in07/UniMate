@@ -37,7 +37,7 @@
 | **Voice & Speech** | Browser Web Speech API for STT voice recognition & TTS read-aloud |
 
 ---
-
+<!-- 
 ## ⚙️ Environment Variables Setup
 
 ### Backend (`backend/.env`)
@@ -77,7 +77,7 @@ VITE_FIREBASE_APP_ID=
 
 *(Note: When Firebase credentials are not yet supplied, UniMate operates in local developer fallback mode so you can test all features immediately without crashes).*
 
----
+--- -->
 
 ## 🚀 Running Locally
 
