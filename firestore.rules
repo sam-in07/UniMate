@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // User profile: only readable by authenticated users, only owner can write
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Materials (study uploads/extracted text): only accessible by owner
+    match /materials/{materialId} {
+      allow read, write: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    // Summaries, Quizzes, Quiz attempts: private to owner
+    match /summaries/{summaryId} {
+      allow read, write: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+    }
+    match /quizzes/{quizId} {
+      allow read, write: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+    }
+    match /attempts/{attemptId} {
+      allow read, write: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    // Study plans: private to owner
+    match /studyPlans/{planId} {
+      allow read, write: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    // Checkins & Wellbeing notes: strictly private to owner
+    match /checkins/{checkinId} {
+      allow read, write: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    // Past Questions: authenticated users can read, only non-anonymous users can create
+    match /pastQuestions/{questionId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.token.firebase.sign_in_provider != 'anonymous';
+      allow update, delete: if request.auth != null && resource.data.uploaderUid == request.auth.uid;
+    }
+
+    // Listings (Marketplace): public read for all auth users, create/update only by non-anonymous owner
+    match /listings/{listingId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.token.firebase.sign_in_provider != 'anonymous';
+      allow update, delete: if request.auth != null && resource.data.sellerUid == request.auth.uid;
+    }
+
+    // Connections: only participants can read/update
+    match /connections/{connectionId} {
+      allow read, write: if request.auth != null && 
+        (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+      allow create: if request.auth != null && request.resource.data.fromUid == request.auth.uid;
+    }
+
+    // Chats and Messages: only active participants
+    match /chats/{chatId} {
+      allow read, write: if request.auth != null && request.auth.uid in resource.data.participants;
+      match /messages/{messageId} {
+        allow read: if request.auth != null && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+        allow create: if request.auth != null && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants && request.resource.data.senderUid == request.auth.uid;
+      }
+    }
+
+    // Reports and Blocks: authenticated users can create their own report/block
+    match /reports/{reportId} {
+      allow create: if request.auth != null && request.resource.data.reporterUid == request.auth.uid;
+      allow read, update, delete: if false; // Only admin via backend
+    }
+    match /blocks/{blockId} {
+      allow read, write: if request.auth != null && resource.data.blockerUid == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.blockerUid == request.auth.uid;
+    }
+  }
+}
