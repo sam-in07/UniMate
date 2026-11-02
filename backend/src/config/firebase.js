@@ -8,46 +8,78 @@ let firestoreInstance = null;
 
 try {
   let credential = null;
+  let projectId = process.env.FIREBASE_PROJECT_ID;
 
-  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-    let serviceAccount;
+  // 1. Primary: JSON file path from FIREBASE_SERVICE_ACCOUNT_PATH
+  const accountPathEnv = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+  if (accountPathEnv) {
+    const resolvedPath = path.isAbsolute(accountPathEnv)
+      ? accountPathEnv
+      : path.resolve(process.cwd(), accountPathEnv);
+
+    if (fs.existsSync(resolvedPath)) {
+      try {
+        const fileContent = fs.readFileSync(resolvedPath, 'utf-8');
+        const serviceAccount = JSON.parse(fileContent);
+        credential = admin.credential.cert(serviceAccount);
+        if (serviceAccount.project_id) {
+          projectId = serviceAccount.project_id;
+        }
+      } catch (fileErr) {
+        console.warn('[Firebase Admin] Error reading FIREBASE_SERVICE_ACCOUNT_PATH file:', fileErr.message);
+      }
+    }
+  }
+
+  // 2. Fallback 1: JSON string from FIREBASE_SERVICE_ACCOUNT_JSON
+  if (!credential && process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
     const jsonStr = process.env.FIREBASE_SERVICE_ACCOUNT_JSON.trim();
     if (jsonStr.startsWith('{')) {
-      serviceAccount = JSON.parse(jsonStr);
-    } else if (fs.existsSync(jsonStr)) {
-      serviceAccount = JSON.parse(fs.readFileSync(jsonStr, 'utf-8'));
+      try {
+        const serviceAccount = JSON.parse(jsonStr);
+        credential = admin.credential.cert(serviceAccount);
+        if (serviceAccount.project_id) {
+          projectId = serviceAccount.project_id;
+        }
+      } catch (jsonErr) {
+        console.warn('[Firebase Admin] Error parsing FIREBASE_SERVICE_ACCOUNT_JSON:', jsonErr.message);
+      }
     }
-    if (serviceAccount) {
-      credential = admin.credential.cert(serviceAccount);
-    }
-  } else if (
+  }
+
+  // 3. Fallback 2: Separate environment variables
+  if (
+    !credential &&
     process.env.FIREBASE_PROJECT_ID &&
     process.env.FIREBASE_CLIENT_EMAIL &&
     process.env.FIREBASE_PRIVATE_KEY
   ) {
-    credential = admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-    });
+    try {
+      credential = admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      });
+      projectId = process.env.FIREBASE_PROJECT_ID;
+    } catch (certErr) {
+      console.warn('[Firebase Admin] Error creating credentials from individual env vars:', certErr.message);
+    }
   }
 
   if (credential) {
     const app = admin.initializeApp({
       credential,
-      projectId: process.env.FIREBASE_PROJECT_ID,
+      projectId,
     });
     authInstance = admin.auth(app);
     firestoreInstance = admin.firestore(app);
     isFirebaseConfigured = true;
     console.log('[Firebase Admin] Initialized successfully with credentials.');
   } else {
-    console.warn('[Firebase Admin] Credentials not found in .env. Running in local fallback developer mode.');
+    console.error('[Firebase Admin] Missing Firebase credentials. Check FIREBASE_SERVICE_ACCOUNT_PATH, FIREBASE_SERVICE_ACCOUNT_JSON, or FIREBASE_* variables in backend/.env.');
   }
 } catch (err) {
-  console.warn('[Firebase Admin] Initialization notice:', err.message);
-  console.warn('[Firebase Admin] Running in local fallback developer mode.');
+  console.error('[Firebase Admin] Initialization failed:', err.message);
 }
 
 export { authInstance as auth, firestoreInstance as firestore, isFirebaseConfigured };
-

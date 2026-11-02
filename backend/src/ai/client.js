@@ -7,6 +7,14 @@ const CACHE_TTL_MS = 1000 * 60 * 60 * 4; // 4 hours
 // Per-user rate limiting tracker
 const userRateLimits = new Map();
 
+// Provider cooldown tracker (for 429 / quota errors)
+const providerCooldowns = new Map();
+const COOLDOWN_DURATION_MS = 3 * 60 * 1000; // 3 minutes
+
+// Dynamic model caches for fallbacks
+let cachedGroqModel = null;
+let cachedGeminiModel = null;
+
 /**
  * Check if a user has exceeded rate limits.
  * Default: 25 requests/min for registered, 10 requests/min for guests
@@ -37,19 +45,47 @@ export function checkUserRateLimit(userId, isGuest = false) {
   return { allowed: true };
 }
 
-/**
- * Generate a hash for prompt caching
- */
 function hashPrompt(system, messages, json) {
   const payload = JSON.stringify({ system, messages, json });
   return crypto.createHash('sha256').update(payload).digest('hex');
 }
 
+function isCoolingDown(provider) {
+  const expire = providerCooldowns.get(provider);
+  if (!expire) return false;
+  if (Date.now() > expire) {
+    providerCooldowns.delete(provider);
+    return false;
+  }
+  return true;
+}
+
+function setCooldown(provider) {
+  const until = Date.now() + COOLDOWN_DURATION_MS;
+  providerCooldowns.set(provider, until);
+  console.warn(`[AI Layer] Provider '${provider}' marked cooling down until ${new Date(until).toISOString()}`);
+}
+
+function isQuotaOrRateLimitError(status, errorText = '') {
+  const lower = String(errorText).toLowerCase();
+  return (
+    status === 429 ||
+    status === 402 ||
+    lower.includes('quota') ||
+    lower.includes('rate limit') ||
+    lower.includes('resource_exhausted') ||
+    lower.includes('insufficient_quota') ||
+    lower.includes('credit')
+  );
+}
+
 /**
- * Call Ollama Cloud API (Primary)
+ * 1. Call Ollama Cloud API (Primary)
+ * POST {OLLAMA_BASE_URL}/api/chat
  */
 async function callOllamaCloud({ system, messages, json = false, timeoutMs = 45000 }) {
-  const baseUrl = (process.env.OLLAMA_BASE_URL || 'https://ollama.com/api').replace(/\/+$/, '');
+  const rawBase = process.env.OLLAMA_BASE_URL || 'https://ollama.com';
+  const baseUrl = rawBase.replace(/\/+$/, '');
   const apiKey = process.env.OLLAMA_API_KEY;
   const model = process.env.OLLAMA_MODEL || 'gemma4:31b';
 
@@ -57,7 +93,7 @@ async function callOllamaCloud({ system, messages, json = false, timeoutMs = 450
     throw new Error('OLLAMA_API_KEY is not configured in backend environment.');
   }
 
-  const endpoint = baseUrl.endsWith('/api') ? `${baseUrl}/chat` : `${baseUrl}/api/chat`;
+  const endpoint = `${baseUrl}/api/chat`;
 
   const formattedMessages = [];
   if (system) {
@@ -91,12 +127,21 @@ async function callOllamaCloud({ system, messages, json = false, timeoutMs = 450
       signal: controller.signal
     });
 
-    if (!res.ok) {
-      const errorText = await res.text();
-      throw new Error(`Ollama Cloud error [status ${res.status}]: ${errorText}`);
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const textPreview = (await res.text()).slice(0, 150);
+      throw new Error(`Ollama Cloud returned non-JSON response [status ${res.status}, content-type: ${contentType}]: ${textPreview}`);
     }
 
     const data = await res.json();
+    if (!res.ok) {
+      const errMessage = data.error || `HTTP ${res.status}`;
+      if (isQuotaOrRateLimitError(res.status, errMessage)) {
+        setCooldown('ollama');
+      }
+      throw new Error(`Ollama Cloud error [status ${res.status}]: ${errMessage}`);
+    }
+
     const output = data.message?.content || data.response || '';
     return { text: output, provider: 'ollama', model };
   } finally {
@@ -105,17 +150,118 @@ async function callOllamaCloud({ system, messages, json = false, timeoutMs = 450
 }
 
 /**
- * Call Google Gemini API (Fallback)
+ * 2. Call Groq API (Fallback 1)
+ * OpenAI-compatible: POST {GROQ_BASE_URL}/chat/completions
+ */
+async function callGroq({ system, messages, json = false, timeoutMs = 45000 }) {
+  const rawBase = process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1';
+  const baseUrl = rawBase.replace(/\/+$/, '');
+  const apiKey = process.env.GROQ_API_KEY;
+  let model = cachedGroqModel || process.env.GROQ_MODEL || 'qwen/qwen3.8-27b';
+
+  if (!apiKey) {
+    throw new Error('GROQ_API_KEY is not configured in backend environment.');
+  }
+
+  const endpoint = `${baseUrl}/chat/completions`;
+
+  const formattedMessages = [];
+  if (system) {
+    formattedMessages.push({ role: 'system', content: system });
+  }
+  for (const m of messages) {
+    formattedMessages.push({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: m.content
+    });
+  }
+
+  async function executeRequest(activeModel) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: activeModel,
+          messages: formattedMessages,
+          stream: false,
+          ...(json ? { response_format: { type: 'json_object' } } : {})
+        }),
+        signal: controller.signal
+      });
+
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = (await res.text()).slice(0, 150);
+        throw new Error(`Groq returned non-JSON response [status ${res.status}, content-type: ${contentType}]: ${text}`);
+      }
+
+      const data = await res.json();
+      return { res, data };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  let { res, data } = await executeRequest(model);
+
+  // If model not found (404 or error text contains model), dynamically list models and pick a working chat model
+  if (!res.ok && (res.status === 404 || data.error?.message?.toLowerCase().includes('model'))) {
+    console.warn(`[AI Layer] Groq model '${model}' not found. Fetching available models from /models...`);
+    try {
+      const listRes = await fetch(`${baseUrl}/models`, {
+        headers: { 'Authorization': `Bearer ${apiKey}` }
+      });
+      if (listRes.ok) {
+        const listData = await listRes.json();
+        const available = listData.data || [];
+        const candidate = available.find(m =>
+          !m.id.includes('whisper') &&
+          !m.id.includes('guard') &&
+          !m.id.includes('orpheus')
+        );
+        if (candidate) {
+          cachedGroqModel = candidate.id;
+          model = candidate.id;
+          console.log(`[AI Layer] Selected available Groq model: ${model}`);
+          const retry = await executeRequest(model);
+          res = retry.res;
+          data = retry.data;
+        }
+      }
+    } catch (listErr) {
+      console.warn('[AI Layer] Could not list Groq models:', listErr.message);
+    }
+  }
+
+  if (!res.ok) {
+    const errMsg = data.error?.message || `HTTP ${res.status}`;
+    if (isQuotaOrRateLimitError(res.status, errMsg)) {
+      setCooldown('groq');
+    }
+    throw new Error(`Groq API error [status ${res.status}]: ${errMsg}`);
+  }
+
+  const output = data.choices?.[0]?.message?.content || '';
+  return { text: output, provider: 'groq', model };
+}
+
+/**
+ * 3. Call Google Gemini API (Fallback 2)
  */
 async function callGemini({ system, messages, json = false, timeoutMs = 45000 }) {
   const apiKey = process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+  let model = cachedGeminiModel || process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not configured in backend environment.');
   }
-
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const contents = [];
   for (const m of messages) {
@@ -134,30 +280,123 @@ async function callGemini({ system, messages, json = false, timeoutMs = 45000 })
     }
   };
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  async function executeRequest(activeModel) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:generateContent`;
 
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal
-    });
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey
+        },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal
+      });
 
-    if (!res.ok) {
-      const errorText = await res.text();
-      throw new Error(`Gemini API error [status ${res.status}]: ${errorText}`);
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = (await res.text()).slice(0, 150);
+        throw new Error(`Gemini returned non-JSON response [status ${res.status}, content-type: ${contentType}]: ${text}`);
+      }
+
+      const data = await res.json();
+      return { res, data };
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    const data = await res.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    return { text, provider: 'gemini', model };
-  } finally {
-    clearTimeout(timeoutId);
   }
+
+  let { res, data } = await executeRequest(model);
+
+  // On 404 (model not found), call ListModels and pick a flash or flash-lite model
+  if (!res.ok && res.status === 404) {
+    console.warn(`[AI Layer] Gemini model '${model}' returned 404. Calling ListModels...`);
+    try {
+      const listRes = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+        headers: { 'x-goog-api-key': apiKey }
+      });
+      if (listRes.ok) {
+        const listData = await listRes.json();
+        const models = listData.models || [];
+        const flashCandidate = models.find(m =>
+          m.supportedGenerationMethods?.includes('generateContent') &&
+          (m.name.includes('flash') || m.name.includes('flash-lite'))
+        );
+        if (flashCandidate) {
+          const pickedModel = flashCandidate.name.replace(/^models\//, '');
+          cachedGeminiModel = pickedModel;
+          model = pickedModel;
+          console.log(`[AI Layer] Discovered working Gemini model: ${model}`);
+          const retry = await executeRequest(model);
+          res = retry.res;
+          data = retry.data;
+        }
+      }
+    } catch (listErr) {
+      console.warn('[AI Layer] Could not list Gemini models:', listErr.message);
+    }
+  }
+
+  if (!res.ok) {
+    const errMsg = data.error?.message || `HTTP ${res.status}`;
+    if (isQuotaOrRateLimitError(res.status, errMsg)) {
+      setCooldown('gemini');
+    }
+    throw new Error(`Gemini API error [status ${res.status}]: ${errMsg}`);
+  }
+
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  return { text, provider: 'gemini', model };
+}
+
+/**
+ * Provider Registry
+ */
+const PROVIDER_HANDLERS = {
+  ollama: {
+    fn: callOllamaCloud,
+    isConfigured: () => Boolean(process.env.OLLAMA_API_KEY && process.env.OLLAMA_API_KEY.trim()),
+    getModel: () => process.env.OLLAMA_MODEL || 'gemma4:31b'
+  },
+  groq: {
+    fn: callGroq,
+    isConfigured: () => Boolean(process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.trim()),
+    getModel: () => cachedGroqModel || process.env.GROQ_MODEL || 'qwen/qwen3.8-27b'
+  },
+  gemini: {
+    fn: callGemini,
+    isConfigured: () => Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()),
+    getModel: () => cachedGeminiModel || process.env.GEMINI_MODEL || 'gemini-3.5-flash'
+  }
+};
+
+/**
+ * Get ordered list of providers to try
+ */
+function getProviderChain() {
+  const primary = (process.env.AI_PRIMARY || 'ollama').toLowerCase().trim();
+  const rawFallbacks = (process.env.AI_FALLBACKS || 'groq,gemini').split(',');
+  const fallbacks = rawFallbacks.map(f => f.toLowerCase().trim()).filter(Boolean);
+
+  const seen = new Set();
+  const chain = [];
+
+  if (PROVIDER_HANDLERS[primary]) {
+    chain.push(primary);
+    seen.add(primary);
+  }
+
+  for (const f of fallbacks) {
+    if (PROVIDER_HANDLERS[f] && !seen.has(f)) {
+      chain.push(f);
+      seen.add(f);
+    }
+  }
+
+  return chain;
 }
 
 /**
@@ -175,7 +414,7 @@ function stripCodeFences(text) {
 }
 
 /**
- * Main AI generation function with automatic fallback & JSON validation
+ * Main AI generation function with multi-provider fallback & JSON validation
  */
 export async function generateAI({
   system = '',
@@ -185,7 +424,6 @@ export async function generateAI({
   timeoutMs = 45000,
   skipCache = false
 }) {
-  // Shared system prompt rules
   const baseRules = 
     `You are UniMate's AI academic companion for students in Bangladesh and worldwide.\n` +
     `CRITICAL INSTRUCTIONS:\n` +
@@ -206,39 +444,46 @@ export async function generateAI({
     }
   }
 
-  const primaryChoice = (process.env.AI_PRIMARY || 'ollama').toLowerCase();
-  const primaryFn = primaryChoice === 'gemini' ? callGemini : callOllamaCloud;
-  const fallbackFn = primaryChoice === 'gemini' ? callOllamaCloud : callGemini;
-  const primaryName = primaryChoice;
-  const fallbackName = primaryChoice === 'gemini' ? 'ollama' : 'gemini';
-
+  const chain = getProviderChain();
   let rawOutput = '';
   let providerUsed = '';
   let modelUsed = '';
+  const providerErrors = [];
 
-  // Attempt Primary
-  try {
-    const result = await primaryFn({ system: fullSystemPrompt, messages, json, timeoutMs });
-    rawOutput = result.text;
-    providerUsed = result.provider;
-    modelUsed = result.model;
-    console.log(`[AI Layer] Generated successfully via primary (${providerUsed} - ${modelUsed})`);
-  } catch (primaryErr) {
-    console.warn(`[AI Layer] Primary provider (${primaryName}) failed: ${primaryErr.message}. Retrying fallback (${fallbackName})...`);
-    // Attempt Fallback
+  for (const providerName of chain) {
+    const handler = PROVIDER_HANDLERS[providerName];
+    if (!handler.isConfigured()) {
+      continue;
+    }
+
+    if (isCoolingDown(providerName)) {
+      console.warn(`[AI Layer] Skipping '${providerName}' due to active cooldown.`);
+      continue;
+    }
+
     try {
-      const result = await fallbackFn({ system: fullSystemPrompt, messages, json, timeoutMs });
+      const result = await handler.fn({
+        system: fullSystemPrompt,
+        messages,
+        json,
+        timeoutMs
+      });
       rawOutput = result.text;
       providerUsed = result.provider;
       modelUsed = result.model;
-      console.log(`[AI Layer] Fallback succeeded (${providerUsed} - ${modelUsed})`);
-    } catch (fallbackErr) {
-      console.error(`[AI Layer] Both primary and fallback failed:`, fallbackErr.message);
-      throw new Error(`AI generation failed on both providers. Primary: ${primaryErr.message}; Fallback: ${fallbackErr.message}`);
+      console.log(`[AI Layer] Answered by: ${providerUsed} (model: ${modelUsed})`);
+      break;
+    } catch (err) {
+      console.warn(`[AI Layer] Provider '${providerName}' failed: ${err.message}`);
+      providerErrors.push(`${providerName}: ${err.message}`);
     }
   }
 
-  // Handle JSON mode with validation and repair retry
+  if (!providerUsed) {
+    throw new Error(`All configured AI providers failed. Details: ${providerErrors.join(' | ') || 'No providers available'}`);
+  }
+
+  // Handle JSON mode with validation and 1 repair retry
   if (json) {
     let cleaned = stripCodeFences(rawOutput);
     let parsedData = null;
@@ -250,7 +495,6 @@ export async function generateAI({
       }
     } catch (err) {
       console.warn(`[AI Layer] JSON parse/validation error: ${err.message}. Triggering repair prompt...`);
-      // Retry once with repair prompt
       const repairMessages = [
         ...messages,
         { role: 'assistant', content: rawOutput },
@@ -261,7 +505,8 @@ export async function generateAI({
       ];
 
       try {
-        const repairResult = await (providerUsed === primaryName ? primaryFn : fallbackFn)({
+        const handler = PROVIDER_HANDLERS[providerUsed];
+        const repairResult = await handler.fn({
           system: fullSystemPrompt,
           messages: repairMessages,
           json: true,
@@ -287,7 +532,7 @@ export async function generateAI({
     return payload;
   }
 
-  // Text response
+  // Plain text response
   const payload = {
     text: rawOutput,
     provider: providerUsed,
@@ -298,59 +543,54 @@ export async function generateAI({
 }
 
 /**
- * Health check for AI providers
+ * Health check: tests EVERY provider with a tiny REAL generation call
+ * Lists every provider as ok, error, or not_configured
+ * NEVER leaks secret keys
  */
 export async function checkAIHealth() {
-  const results = {
-    configuredPrimary: process.env.AI_PRIMARY || 'ollama',
-    providers: {
-      ollama: {
-        configured: Boolean(process.env.OLLAMA_API_KEY),
-        model: process.env.OLLAMA_MODEL || 'gemma4:31b',
-        status: 'unknown'
-      },
-      gemini: {
-        configured: Boolean(process.env.GEMINI_API_KEY),
-        model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
-        status: 'unknown'
-      }
+  const providers = {};
+  const chain = ['ollama', 'groq', 'gemini'];
+
+  for (const name of chain) {
+    const handler = PROVIDER_HANDLERS[name];
+    const configured = handler.isConfigured();
+    const model = handler.getModel();
+
+    if (!configured) {
+      providers[name] = {
+        configured: false,
+        status: 'not_configured',
+        model
+      };
+      continue;
     }
+
+    // Provider is configured: make a real test call
+    try {
+      const res = await handler.fn({
+        system: '',
+        messages: [{ role: 'user', content: 'Reply with OK' }],
+        timeoutMs: 10000
+      });
+      providers[name] = {
+        configured: true,
+        status: 'ok',
+        model: res.model || model,
+        reply: res.text?.trim()?.slice(0, 30) || 'OK'
+      };
+    } catch (err) {
+      providers[name] = {
+        configured: true,
+        status: 'error',
+        model,
+        error: err.message?.replace(/(key|token)=[^\s&]+/gi, '$1=***') || 'Request failed'
+      };
+    }
+  }
+
+  return {
+    primary: process.env.AI_PRIMARY || 'ollama',
+    fallbacks: process.env.AI_FALLBACKS || 'groq,gemini',
+    providers
   };
-
-  // Test Ollama if key exists
-  if (results.providers.ollama.configured) {
-    try {
-      await callOllamaCloud({
-        system: '',
-        messages: [{ role: 'user', content: 'ping' }],
-        timeoutMs: 8000
-      });
-      results.providers.ollama.status = 'reachable';
-    } catch (err) {
-      results.providers.ollama.status = 'unreachable';
-      results.providers.ollama.error = err.message;
-    }
-  } else {
-    results.providers.ollama.status = 'not_configured';
-  }
-
-  // Test Gemini if key exists
-  if (results.providers.gemini.configured) {
-    try {
-      await callGemini({
-        system: '',
-        messages: [{ role: 'user', content: 'ping' }],
-        timeoutMs: 8000
-      });
-      results.providers.gemini.status = 'reachable';
-    } catch (err) {
-      results.providers.gemini.status = 'unreachable';
-      results.providers.gemini.error = err.message;
-    }
-  } else {
-    results.providers.gemini.status = 'not_configured';
-  }
-
-  return results;
 }
-

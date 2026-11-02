@@ -34,12 +34,6 @@ service cloud.firestore {
       allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
     }
 
-    // Checkins & Wellbeing notes: strictly private to owner
-    match /checkins/{checkinId} {
-      allow read, write: if request.auth != null && resource.data.ownerUid == request.auth.uid;
-      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
-    }
-
     // Past Questions: authenticated users can read, only non-anonymous users can create
     match /pastQuestions/{questionId} {
       allow read: if request.auth != null;
@@ -47,7 +41,7 @@ service cloud.firestore {
       allow update, delete: if request.auth != null && resource.data.uploaderUid == request.auth.uid;
     }
 
-    // Listings (Marketplace): public read for all auth users, create/update only by non-anonymous owner
+    // Listings (Marketplace): read for all auth users, create/update only by non-anonymous owner
     match /listings/{listingId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null && request.auth.token.firebase.sign_in_provider != 'anonymous';
@@ -59,6 +53,12 @@ service cloud.firestore {
       allow read, write: if request.auth != null && 
         (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
       allow create: if request.auth != null && request.resource.data.fromUid == request.auth.uid;
+    }
+
+    // Notifications: recipient can read and dismiss
+    match /notifications/{notificationId} {
+      allow read, update, delete: if request.auth != null && resource.data.toUid == request.auth.uid;
+      allow create: if request.auth != null;
     }
 
     // Chats and Messages: only active participants
@@ -81,4 +81,3 @@ service cloud.firestore {
     }
   }
 }
-
