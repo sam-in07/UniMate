@@ -543,10 +543,170 @@ export async function generateAI({
 }
 
 /**
- * Health check: tests EVERY provider with a tiny REAL generation call
- * Lists every provider as ok, error, or not_configured
- * NEVER leaks secret keys
+ * Content safety check for student marketplace and profile text
+ * Flag obvious abuse/spam; do not over-block.
  */
+export async function aiCheckContentSafety(text) {
+  if (!text || text.trim().length < 4) return { safe: true, flagged: false };
+
+  const system = 
+    `You are a content safety filter for a student university platform in Bangladesh.\n` +
+    `Evaluate if the text contains severe harassment, hate speech, vulgar abuse, or explicit spam/scams.\n` +
+    `DO NOT over-block ordinary academic discussion, textbook titles, campus slang, or course codes.\n` +
+    `Return JSON: { "safe": boolean, "flagged": boolean, "reason": "short explanation if unsafe" }`;
+
+  try {
+    const result = await generateAI({
+      system,
+      messages: [{ role: 'user', content: `Check this student text:\n"""${text.slice(0, 1500)}"""` }],
+      json: true,
+      timeoutMs: 15000,
+      skipCache: true
+    });
+    return result.data || { safe: true, flagged: false };
+  } catch (err) {
+    console.warn('[AI Content Safety] Warning: safety check failed, allowing post:', err.message);
+    return { safe: true, flagged: false }; // fail open gracefully
+  }
+}
+
+/**
+ * AI Assist for Used-Book Listings
+ * Proposes title, author, edition, subject tags, and suggested price range
+ */
+export async function aiAssistListing({ query }) {
+  const system = 
+    `You are an AI book catalog assistant for university students in Bangladesh.\n` +
+    `Given a book title, ISBN, or topic, propose standard academic book details and a suggested secondhand student price range in BDT (Bangladeshi Taka).\n` +
+    `Return JSON: {\n` +
+    `  "title": "Clean full book title",\n` +
+    `  "author": "Primary author(s)",\n` +
+    `  "edition": "Common edition (e.g. 7th Edition)",\n` +
+    `  "tags": ["Subject Tag 1", "Subject Tag 2", "Topic"],\n` +
+    `  "suggestedPriceMin": 150,\n` +
+    `  "suggestedPriceMax": 350,\n` +
+    `  "currency": "BDT",\n` +
+    `  "disclaimer": "AI suggested price range based on typical Bangladesh student secondhand market. Not guaranteed."\n` +
+    `}`;
+
+  const result = await generateAI({
+    system,
+    messages: [{ role: 'user', content: `Suggest metadata for this book: "${query}"` }],
+    json: true,
+    timeoutMs: 25000
+  });
+
+  return result.data;
+}
+
+/**
+ * AI Semantic Search for Marketplace Listings
+ * Translates queries like "I need a DBMS book for 3rd semester" into search tags/keywords
+ */
+export async function aiSemanticSearchListings(query) {
+  const system = 
+    `You are a search query parser for an academic student textbook marketplace.\n` +
+    `Extract relevant keywords, academic subjects, and tag variants from the user's natural language request.\n` +
+    `Return JSON: {\n` +
+    `  "keywords": ["keyword1", "keyword2"],\n` +
+    `  "tags": ["Subject Tag 1", "Subject Tag 2"],\n` +
+    `  "cleanedQuery": "simple search term"\n` +
+    `}`;
+
+  try {
+    const result = await generateAI({
+      system,
+      messages: [{ role: 'user', content: `User query: "${query}"` }],
+      json: true,
+      timeoutMs: 15000
+    });
+    return result.data;
+  } catch (err) {
+    return {
+      keywords: query.toLowerCase().split(/\s+/).filter(w => w.length > 2),
+      tags: [],
+      cleanedQuery: query
+    };
+  }
+}
+
+/**
+ * AI Collaborator Match Ranking
+ * Ranks small list of candidates and generates a human "Why this match" explanation
+ */
+export async function aiRankCollaborators({ userProfile, weakTopics = [], candidates = [] }) {
+  if (!candidates || candidates.length === 0) return [];
+
+  const candidatesBrief = candidates.map(c => ({
+    uid: c.uid,
+    displayName: c.displayName,
+    university: c.university,
+    program: c.program,
+    level: c.level,
+    skills: c.skills,
+    interests: c.interests,
+    lookingFor: c.lookingFor,
+    bio: c.bio
+  }));
+
+  const system = 
+    `You are an AI study partner and project teammate matching engine for university students.\n` +
+    `Given the current student's profile and weak study topics, rank the candidate students from best match to lowest.\n` +
+    `For each candidate, provide a 1-2 sentence human explanation of "why this match" highlighting overlapping interests, complementary skills, or help on weak topics.\n` +
+    `Return JSON: {\n` +
+    `  "matches": [\n` +
+    `    {\n` +
+    `      "uid": "candidate_uid",\n` +
+    `      "matchScore": 85,\n` +
+    `      "whyThisMatch": "Short human friendly explanation"\n` +
+    `    }\n` +
+    `  ]\n` +
+    `}`;
+
+  try {
+    const result = await generateAI({
+      system,
+      messages: [
+        {
+          role: 'user',
+          content: `Current Student Profile:\n${JSON.stringify({
+            university: userProfile?.university,
+            program: userProfile?.program,
+            skills: userProfile?.skills,
+            interests: userProfile?.interests,
+            lookingFor: userProfile?.lookingFor,
+            weakTopics
+          })}\n\nCandidate Profiles:\n${JSON.stringify(candidatesBrief)}`
+        }
+      ],
+      json: true,
+      timeoutMs: 30000
+    });
+
+    const rankedMap = new Map();
+    (result.data?.matches || []).forEach(m => {
+      rankedMap.set(m.uid, m);
+    });
+
+    // Merge ranking metadata onto candidate objects
+    return candidates.map(c => {
+      const match = rankedMap.get(c.uid);
+      return {
+        ...c,
+        matchScore: match?.matchScore || 70,
+        whyThisMatch: match?.whyThisMatch || `Both interested in ${c.interests?.[0] || 'studying'} at ${c.university || 'university'}.`
+      };
+    }).sort((a, b) => b.matchScore - a.matchScore);
+  } catch (err) {
+    console.warn('[AI Collaborator Matching] Fallback to heuristic ranking:', err.message);
+    return candidates.map(c => ({
+      ...c,
+      matchScore: 75,
+      whyThisMatch: `Student at ${c.university || 'university'} interested in ${c.interests?.slice(0, 2).join(', ') || 'collaborating'}.`
+    }));
+  }
+}
+
 export async function checkAIHealth() {
   const providers = {};
   const chain = ['ollama', 'groq', 'gemini'];

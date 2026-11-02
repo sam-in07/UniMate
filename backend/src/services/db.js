@@ -1,50 +1,573 @@
 import { firestore, isFirebaseConfigured } from '../config/firebase.js';
 import crypto from 'crypto';
 
-// In-memory local database for development / offline / test mode
-const memoryStore = {
-  users: new Map(),
+// In-memory fallback ONLY for study tools when Firebase is not configured
+const studyMemoryStore = {
   materials: new Map(),
   summaries: new Map(),
   quizzes: new Map(),
   attempts: new Map(),
   studyPlans: new Map(),
-  checkins: new Map(),
-  pastQuestions: new Map(),
-  reports: new Map(),
-  blocks: new Map()
+  pastQuestions: new Map()
 };
 
 function generateId() {
   return crypto.randomUUID();
 }
 
+function handleFirestoreIndexError(err, operationName) {
+  if (err.message && (err.message.includes('indexes?create_composite=') || err.code === 9)) {
+    console.error(`\n================================================================`);
+    console.error(`[Firestore Composite Index Required for ${operationName}]:`);
+    console.error(err.message);
+    console.error(`================================================================\n`);
+  }
+}
+
 /**
- * DB abstraction supporting both Cloud Firestore and local store
+ * Central Database Service
+ * Uses Cloud Firestore via Firebase Admin SDK.
+ * All Student Network, user profile, chat, and marketplace collections require real Firestore.
  */
 export const db = {
-  // Users
+  // -------------------------------------------------------------
+  // USERS & PROFILES
+  // -------------------------------------------------------------
   async getUser(uid) {
-    if (isFirebaseConfigured && firestore) {
-      const snap = await firestore.collection('users').doc(uid).get();
-      return snap.exists ? { uid: snap.id, ...snap.data() } : null;
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured. Cloud Firestore is required for user profiles.');
     }
-    return memoryStore.users.get(uid) || null;
+    const snap = await firestore.collection('users').doc(uid).get();
+    return snap.exists ? { uid: snap.id, ...snap.data() } : null;
   },
 
   async setUser(uid, data) {
-    const record = { ...data, updatedAt: new Date().toISOString() };
-    if (isFirebaseConfigured && firestore) {
-      await firestore.collection('users').doc(uid).set(record, { merge: true });
-      return { uid, ...record };
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured. Cloud Firestore is required for user profiles.');
     }
-    const existing = memoryStore.users.get(uid) || { createdAt: new Date().toISOString() };
-    const merged = { ...existing, ...record, uid };
-    memoryStore.users.set(uid, merged);
-    return merged;
+    const record = { ...data, updatedAt: new Date().toISOString() };
+    await firestore.collection('users').doc(uid).set(record, { merge: true });
+    return { uid, ...record };
   },
 
-  // Materials
+  async getDiscoverableProfiles(currentUid, { university, lookingFor, skill } = {}) {
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured. Cloud Firestore is required for collaborator discovery.');
+    }
+
+    try {
+      let query = firestore.collection('users').limit(40);
+      const snap = await query.get();
+      let list = snap.docs
+        .map(d => ({ uid: d.id, ...d.data() }))
+        .filter(u => u.uid !== currentUid && !u.isProfileHidden);
+
+      if (university) {
+        const uLower = university.toLowerCase();
+        list = list.filter(u => u.university && u.university.toLowerCase().includes(uLower));
+      }
+
+      if (lookingFor) {
+        list = list.filter(u => u.lookingFor && u.lookingFor.includes(lookingFor));
+      }
+
+      if (skill) {
+        const sLower = skill.toLowerCase();
+        list = list.filter(u => 
+          u.skills?.some(s => s.toLowerCase().includes(sLower)) ||
+          u.interests?.some(i => i.toLowerCase().includes(sLower))
+        );
+      }
+
+      return list;
+    } catch (err) {
+      handleFirestoreIndexError(err, 'getDiscoverableProfiles');
+      throw err;
+    }
+  },
+
+  // -------------------------------------------------------------
+  // USED-BOOK MARKETPLACE
+  // -------------------------------------------------------------
+  async createListing(sellerUid, data) {
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured. Cloud Firestore is required for marketplace listings.');
+    }
+    const id = generateId();
+    const doc = {
+      id,
+      sellerUid,
+      ...data,
+      isDemo: Boolean(data.isDemo),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    await firestore.collection('listings').doc(id).set(doc);
+    return doc;
+  },
+
+  async getListings({ search, tags, condition, university, minPrice, maxPrice, status = 'active' } = {}) {
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured. Cloud Firestore is required for marketplace listings.');
+    }
+
+    try {
+      const snap = await firestore.collection('listings')
+        .where('status', '==', status)
+        .limit(100)
+        .get();
+
+      let list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // Client-side filtering
+      if (search) {
+        const query = search.toLowerCase();
+        list = list.filter(item =>
+          item.title?.toLowerCase().includes(query) ||
+          item.author?.toLowerCase().includes(query) ||
+          item.description?.toLowerCase().includes(query) ||
+          item.tags?.some(t => t.toLowerCase().includes(query))
+        );
+      }
+
+      if (tags && tags.length > 0) {
+        const tagList = Array.isArray(tags) ? tags : [tags];
+        list = list.filter(item =>
+          item.tags?.some(t => tagList.some(reqTag => reqTag.toLowerCase() === t.toLowerCase()))
+        );
+      }
+
+      if (condition) {
+        list = list.filter(item => item.condition === condition);
+      }
+
+      if (university) {
+        const uQuery = university.toLowerCase();
+        list = list.filter(item => item.university?.toLowerCase().includes(uQuery));
+      }
+
+      if (minPrice !== undefined && minPrice !== null) {
+        list = list.filter(item => item.price >= Number(minPrice));
+      }
+
+      if (maxPrice !== undefined && maxPrice !== null) {
+        list = list.filter(item => item.price <= Number(maxPrice));
+      }
+
+      // Sort by createdAt desc
+      list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      return list;
+    } catch (err) {
+      handleFirestoreIndexError(err, 'getListings');
+      throw err;
+    }
+  },
+
+  async getListingById(id) {
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured. Cloud Firestore is required for marketplace listings.');
+    }
+    const snap = await firestore.collection('listings').doc(id).get();
+    return snap.exists ? { id: snap.id, ...snap.data() } : null;
+  },
+
+  async updateListing(id, sellerUid, data) {
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured. Cloud Firestore is required for marketplace listings.');
+    }
+    const ref = firestore.collection('listings').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return null;
+    if (snap.data().sellerUid !== sellerUid) {
+      throw new Error('Unauthorized: You can only update your own book listings.');
+    }
+    const updated = { ...data, updatedAt: new Date().toISOString() };
+    await ref.update(updated);
+    return { id, ...snap.data(), ...updated };
+  },
+
+  async markListingSold(id, sellerUid) {
+    return this.updateListing(id, sellerUid, { status: 'sold' });
+  },
+
+  async deleteListing(id, sellerUid) {
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured. Cloud Firestore is required for marketplace listings.');
+    }
+    const ref = firestore.collection('listings').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return false;
+    if (snap.data().sellerUid !== sellerUid) {
+      throw new Error('Unauthorized: You can only delete your own book listings.');
+    }
+    await ref.delete();
+    return true;
+  },
+
+  // -------------------------------------------------------------
+  // COLLABORATOR CONNECTIONS
+  // -------------------------------------------------------------
+  async createConnection(fromUid, toUid, message = '') {
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured. Cloud Firestore is required for collaborator connections.');
+    }
+
+    if (fromUid === toUid) {
+      throw new Error('You cannot connect with yourself.');
+    }
+
+    // Check existing connection in either direction
+    const snap1 = await firestore.collection('connections')
+      .where('fromUid', '==', fromUid)
+      .where('toUid', '==', toUid)
+      .limit(1)
+      .get();
+
+    const snap2 = await firestore.collection('connections')
+      .where('fromUid', '==', toUid)
+      .where('toUid', '==', fromUid)
+      .limit(1)
+      .get();
+
+    if (!snap1.empty || !snap2.empty) {
+      const existing = !snap1.empty ? snap1.docs[0].data() : snap2.docs[0].data();
+      if (existing.status === 'accepted') {
+        throw new Error('You are already connected with this student.');
+      }
+      if (existing.status === 'pending') {
+        throw new Error('A connection request is already pending between you two.');
+      }
+      if (existing.status === 'blocked') {
+        throw new Error('Cannot connect with this student.');
+      }
+    }
+
+    const id = generateId();
+    const doc = {
+      id,
+      fromUid,
+      toUid,
+      status: 'pending',
+      message: message || '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    await firestore.collection('connections').doc(id).set(doc);
+
+    // Create notification for recipient
+    await this.createNotification(toUid, {
+      type: 'connection_request',
+      title: 'New Connection Request',
+      body: message ? `"${message.slice(0, 80)}"` : 'A fellow student wants to connect with you.',
+      link: '/partners?tab=requests'
+    });
+
+    return doc;
+  },
+
+  async updateConnectionStatus(id, currentUid, newStatus) {
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured. Cloud Firestore is required for collaborator connections.');
+    }
+    const ref = firestore.collection('connections').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return null;
+    const data = snap.data();
+
+    // Only recipient can accept/decline
+    if (data.toUid !== currentUid && data.fromUid !== currentUid) {
+      throw new Error('Unauthorized to modify this connection.');
+    }
+
+    const updated = { status: newStatus, updatedAt: new Date().toISOString() };
+    await ref.update(updated);
+
+    if (newStatus === 'accepted') {
+      // Notify the requester that their request was accepted
+      await this.createNotification(data.fromUid, {
+        type: 'connection_accepted',
+        title: 'Connection Accepted!',
+        body: 'Your study connection was accepted. You can now chat in-app!',
+        link: '/chat'
+      });
+    }
+
+    return { id, ...data, ...updated };
+  },
+
+  async getUserConnections(uid) {
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured. Cloud Firestore is required for collaborator connections.');
+    }
+
+    try {
+      const [sentSnap, receivedSnap] = await Promise.all([
+        firestore.collection('connections').where('fromUid', '==', uid).get(),
+        firestore.collection('connections').where('toUid', '==', uid).get()
+      ]);
+
+      const map = new Map();
+      sentSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data(), direction: 'sent' }));
+      receivedSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data(), direction: 'received' }));
+
+      const list = Array.from(map.values());
+      list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      return list;
+    } catch (err) {
+      handleFirestoreIndexError(err, 'getUserConnections');
+      throw err;
+    }
+  },
+
+  async areUsersConnected(uid1, uid2) {
+    if (!isFirebaseConfigured || !firestore) return false;
+    const snap1 = await firestore.collection('connections')
+      .where('fromUid', '==', uid1)
+      .where('toUid', '==', uid2)
+      .where('status', '==', 'accepted')
+      .limit(1)
+      .get();
+    if (!snap1.empty) return true;
+
+    const snap2 = await firestore.collection('connections')
+      .where('fromUid', '==', uid2)
+      .where('toUid', '==', uid1)
+      .where('status', '==', 'accepted')
+      .limit(1)
+      .get();
+    return !snap2.empty;
+  },
+
+  // -------------------------------------------------------------
+  // CHATS & MESSAGES
+  // -------------------------------------------------------------
+  async getOrCreateChat({ user1, user2, type = 'collaborator', listingId = null }) {
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured. Cloud Firestore is required for in-app chat.');
+    }
+
+    // Permission check: Chat allowed ONLY between accepted connections OR buyer-seller for a listing!
+    if (type === 'marketplace' && listingId) {
+      const listing = await this.getListingById(listingId);
+      if (!listing) {
+        throw new Error('Listing not found');
+      }
+      const isSeller = listing.sellerUid === user1 || listing.sellerUid === user2;
+      if (!isSeller) {
+        throw new Error('Marketplace chat must be between the listing seller and an interested buyer.');
+      }
+    } else {
+      const isConnected = await this.areUsersConnected(user1, user2);
+      if (!isConnected) {
+        throw new Error('Chat is locked until your connection request is accepted.');
+      }
+    }
+
+    const participants = [user1, user2].sort();
+    const chatId = listingId ? `market_${listingId}_${participants.join('_')}` : `chat_${participants.join('_')}`;
+
+    const chatRef = firestore.collection('chats').doc(chatId);
+    const snap = await chatRef.get();
+
+    if (snap.exists) {
+      return { id: snap.id, ...snap.data() };
+    }
+
+    const newChat = {
+      id: chatId,
+      participants,
+      type,
+      listingId: listingId || null,
+      lastMessage: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    await chatRef.set(newChat);
+    return newChat;
+  },
+
+  async sendMessage(chatId, senderUid, text) {
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured. Cloud Firestore is required for in-app chat.');
+    }
+
+    const chatRef = firestore.collection('chats').doc(chatId);
+    const chatSnap = await chatRef.get();
+    if (!chatSnap.exists) {
+      throw new Error('Chat conversation does not exist.');
+    }
+
+    const chatData = chatSnap.data();
+    if (!chatData.participants.includes(senderUid)) {
+      throw new Error('Unauthorized: You are not a participant in this conversation.');
+    }
+
+    const messageId = generateId();
+    const messageDoc = {
+      id: messageId,
+      chatId,
+      senderUid,
+      text,
+      createdAt: new Date().toISOString()
+    };
+
+    await chatRef.collection('messages').doc(messageId).set(messageDoc);
+    await chatRef.update({
+      lastMessage: {
+        text: text.slice(0, 100),
+        senderUid,
+        createdAt: messageDoc.createdAt
+      },
+      updatedAt: messageDoc.createdAt
+    });
+
+    // Notify the other participant
+    const otherUid = chatData.participants.find(u => u !== senderUid);
+    if (otherUid) {
+      await this.createNotification(otherUid, {
+        type: 'new_message',
+        title: 'New Message',
+        body: text.length > 50 ? `${text.slice(0, 50)}...` : text,
+        link: `/chat?chatId=${chatId}`
+      });
+    }
+
+    return messageDoc;
+  },
+
+  async getChatMessages(chatId, currentUid) {
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured. Cloud Firestore is required for in-app chat.');
+    }
+
+    const chatRef = firestore.collection('chats').doc(chatId);
+    const chatSnap = await chatRef.get();
+    if (!chatSnap.exists) throw new Error('Chat not found');
+    if (!chatSnap.data().participants.includes(currentUid)) {
+      throw new Error('Unauthorized');
+    }
+
+    const snap = await chatRef.collection('messages')
+      .orderBy('createdAt', 'asc')
+      .limit(100)
+      .get();
+
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  },
+
+  async getUserChats(uid) {
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured. Cloud Firestore is required for in-app chat.');
+    }
+
+    try {
+      const snap = await firestore.collection('chats')
+        .where('participants', 'array-contains', uid)
+        .limit(50)
+        .get();
+
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      list.sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
+      return list;
+    } catch (err) {
+      handleFirestoreIndexError(err, 'getUserChats');
+      throw err;
+    }
+  },
+
+  // -------------------------------------------------------------
+  // NOTIFICATIONS
+  // -------------------------------------------------------------
+  async createNotification(toUid, { type, title, body, link }) {
+    if (!isFirebaseConfigured || !firestore) return null;
+    const id = generateId();
+    const doc = {
+      id,
+      toUid,
+      type,
+      title,
+      body,
+      link: link || '/notifications',
+      read: false,
+      createdAt: new Date().toISOString()
+    };
+    await firestore.collection('notifications').doc(id).set(doc);
+    return doc;
+  },
+
+  async getUserNotifications(uid) {
+    if (!isFirebaseConfigured || !firestore) return [];
+    try {
+      const snap = await firestore.collection('notifications')
+        .where('toUid', '==', uid)
+        .limit(50)
+        .get();
+
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      return list;
+    } catch (err) {
+      handleFirestoreIndexError(err, 'getUserNotifications');
+      return [];
+    }
+  },
+
+  async markNotificationRead(id, uid) {
+    if (!isFirebaseConfigured || !firestore) return false;
+    const ref = firestore.collection('notifications').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists || snap.data().toUid !== uid) return false;
+    await ref.update({ read: true });
+    return true;
+  },
+
+  // -------------------------------------------------------------
+  // REPORTS & BLOCKS
+  // -------------------------------------------------------------
+  async reportItem(reporterUid, { targetType, targetId, reason }) {
+    if (!isFirebaseConfigured || !firestore) {
+      return { id: generateId(), reporterUid, targetType, targetId, reason, status: 'dev_reported' };
+    }
+    const id = generateId();
+    const doc = {
+      id,
+      reporterUid,
+      targetType,
+      targetId,
+      reason,
+      createdAt: new Date().toISOString()
+    };
+    await firestore.collection('reports').doc(id).set(doc);
+    return doc;
+  },
+
+  async blockUser(blockerUid, blockedUid) {
+    if (!isFirebaseConfigured || !firestore) {
+      throw new Error('Firebase credentials not configured.');
+    }
+    const id = `block_${blockerUid}_${blockedUid}`;
+    const doc = {
+      id,
+      blockerUid,
+      blockedUid,
+      createdAt: new Date().toISOString()
+    };
+    await firestore.collection('blocks').doc(id).set(doc);
+    return doc;
+  },
+
+  async getBlockedUserIds(blockerUid) {
+    if (!isFirebaseConfigured || !firestore) return [];
+    const snap = await firestore.collection('blocks')
+      .where('blockerUid', '==', blockerUid)
+      .get();
+    return snap.docs.map(d => d.data().blockedUid);
+  },
+
+  // -------------------------------------------------------------
+  // STUDY TOOLS (Has memoryStore fallback when Firebase is not configured)
+  // -------------------------------------------------------------
   async createMaterial(ownerUid, { title, course, extractedText, type = 'text' }) {
     const id = generateId();
     const doc = {
@@ -60,7 +583,7 @@ export const db = {
       await firestore.collection('materials').doc(id).set(doc);
       return doc;
     }
-    memoryStore.materials.set(id, doc);
+    studyMemoryStore.materials.set(id, doc);
     return doc;
   },
 
@@ -68,26 +591,14 @@ export const db = {
     if (isFirebaseConfigured && firestore) {
       const snap = await firestore.collection('materials')
         .where('ownerUid', '==', ownerUid)
-        .orderBy('createdAt', 'desc')
         .get();
-      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      return list;
     }
-    return Array.from(memoryStore.materials.values())
+    return Array.from(studyMemoryStore.materials.values())
       .filter(m => m.ownerUid === ownerUid)
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  },
-
-  async getMaterialById(id, ownerUid) {
-    if (isFirebaseConfigured && firestore) {
-      const snap = await firestore.collection('materials').doc(id).get();
-      if (!snap.exists) return null;
-      const data = snap.data();
-      if (data.ownerUid !== ownerUid) return null;
-      return { id: snap.id, ...data };
-    }
-    const item = memoryStore.materials.get(id);
-    if (!item || item.ownerUid !== ownerUid) return null;
-    return item;
   },
 
   async deleteMaterial(id, ownerUid) {
@@ -98,13 +609,12 @@ export const db = {
       await docRef.delete();
       return true;
     }
-    const item = memoryStore.materials.get(id);
+    const item = studyMemoryStore.materials.get(id);
     if (!item || item.ownerUid !== ownerUid) return false;
-    memoryStore.materials.delete(id);
+    studyMemoryStore.materials.delete(id);
     return true;
   },
 
-  // Summaries
   async saveSummary(ownerUid, summaryData) {
     const id = generateId();
     const doc = {
@@ -117,7 +627,7 @@ export const db = {
       await firestore.collection('summaries').doc(id).set(doc);
       return doc;
     }
-    memoryStore.summaries.set(id, doc);
+    studyMemoryStore.summaries.set(id, doc);
     return doc;
   },
 
@@ -125,30 +635,16 @@ export const db = {
     if (isFirebaseConfigured && firestore) {
       const snap = await firestore.collection('summaries')
         .where('ownerUid', '==', ownerUid)
-        .orderBy('createdAt', 'desc')
         .get();
-      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      return list;
     }
-    return Array.from(memoryStore.summaries.values())
+    return Array.from(studyMemoryStore.summaries.values())
       .filter(s => s.ownerUid === ownerUid)
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   },
 
-  async deleteSummary(id, ownerUid) {
-    if (isFirebaseConfigured && firestore) {
-      const docRef = firestore.collection('summaries').doc(id);
-      const snap = await docRef.get();
-      if (!snap.exists || snap.data().ownerUid !== ownerUid) return false;
-      await docRef.delete();
-      return true;
-    }
-    const item = memoryStore.summaries.get(id);
-    if (!item || item.ownerUid !== ownerUid) return false;
-    memoryStore.summaries.delete(id);
-    return true;
-  },
-
-  // Quizzes
   async saveQuiz(ownerUid, quizData) {
     const id = generateId();
     const doc = {
@@ -161,7 +657,7 @@ export const db = {
       await firestore.collection('quizzes').doc(id).set(doc);
       return doc;
     }
-    memoryStore.quizzes.set(id, doc);
+    studyMemoryStore.quizzes.set(id, doc);
     return doc;
   },
 
@@ -169,43 +665,16 @@ export const db = {
     if (isFirebaseConfigured && firestore) {
       const snap = await firestore.collection('quizzes')
         .where('ownerUid', '==', ownerUid)
-        .orderBy('createdAt', 'desc')
         .get();
-      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      return list;
     }
-    return Array.from(memoryStore.quizzes.values())
+    return Array.from(studyMemoryStore.quizzes.values())
       .filter(q => q.ownerUid === ownerUid)
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   },
 
-  async getQuizById(id, ownerUid) {
-    if (isFirebaseConfigured && firestore) {
-      const snap = await firestore.collection('quizzes').doc(id).get();
-      if (!snap.exists) return null;
-      const data = snap.data();
-      if (data.ownerUid !== ownerUid) return null;
-      return { id: snap.id, ...data };
-    }
-    const item = memoryStore.quizzes.get(id);
-    if (!item || item.ownerUid !== ownerUid) return null;
-    return item;
-  },
-
-  async deleteQuiz(id, ownerUid) {
-    if (isFirebaseConfigured && firestore) {
-      const docRef = firestore.collection('quizzes').doc(id);
-      const snap = await docRef.get();
-      if (!snap.exists || snap.data().ownerUid !== ownerUid) return false;
-      await docRef.delete();
-      return true;
-    }
-    const item = memoryStore.quizzes.get(id);
-    if (!item || item.ownerUid !== ownerUid) return false;
-    memoryStore.quizzes.delete(id);
-    return true;
-  },
-
-  // Attempts
   async saveAttempt(ownerUid, attemptData) {
     const id = generateId();
     const doc = {
@@ -218,7 +687,7 @@ export const db = {
       await firestore.collection('attempts').doc(id).set(doc);
       return doc;
     }
-    memoryStore.attempts.set(id, doc);
+    studyMemoryStore.attempts.set(id, doc);
     return doc;
   },
 
@@ -226,16 +695,16 @@ export const db = {
     if (isFirebaseConfigured && firestore) {
       const snap = await firestore.collection('attempts')
         .where('ownerUid', '==', ownerUid)
-        .orderBy('createdAt', 'desc')
         .get();
-      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      return list;
     }
-    return Array.from(memoryStore.attempts.values())
+    return Array.from(studyMemoryStore.attempts.values())
       .filter(a => a.ownerUid === ownerUid)
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   },
 
-  // Study Plans
   async saveStudyPlan(ownerUid, planData) {
     const id = generateId();
     const doc = {
@@ -248,7 +717,7 @@ export const db = {
       await firestore.collection('studyPlans').doc(id).set(doc);
       return doc;
     }
-    memoryStore.studyPlans.set(id, doc);
+    studyMemoryStore.studyPlans.set(id, doc);
     return doc;
   },
 
@@ -256,16 +725,16 @@ export const db = {
     if (isFirebaseConfigured && firestore) {
       const snap = await firestore.collection('studyPlans')
         .where('ownerUid', '==', ownerUid)
-        .orderBy('createdAt', 'desc')
         .get();
-      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      return list;
     }
-    return Array.from(memoryStore.studyPlans.values())
+    return Array.from(studyMemoryStore.studyPlans.values())
       .filter(p => p.ownerUid === ownerUid)
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   },
 
-  // Past Questions (Community uploaded)
   async createPastQuestion(uploaderUid, data) {
     const id = generateId();
     const doc = {
@@ -280,7 +749,7 @@ export const db = {
       await firestore.collection('pastQuestions').doc(id).set(doc);
       return doc;
     }
-    memoryStore.pastQuestions.set(id, doc);
+    studyMemoryStore.pastQuestions.set(id, doc);
     return doc;
   },
 
@@ -288,14 +757,14 @@ export const db = {
     let list = [];
     if (isFirebaseConfigured && firestore) {
       const snap = await firestore.collection('pastQuestions')
-        .orderBy('createdAt', 'desc')
         .limit(100)
         .get();
       list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     } else {
-      list = Array.from(memoryStore.pastQuestions.values())
-        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      list = Array.from(studyMemoryStore.pastQuestions.values());
     }
+
+    list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
     return list.filter(item => {
       if (course && !item.course.toLowerCase().includes(course.toLowerCase())) return false;
@@ -311,24 +780,5 @@ export const db = {
       }
       return true;
     });
-  },
-
-  async reportItem(reporterUid, { targetType, targetId, reason }) {
-    const id = generateId();
-    const doc = {
-      id,
-      reporterUid,
-      targetType,
-      targetId,
-      reason,
-      createdAt: new Date().toISOString()
-    };
-    if (isFirebaseConfigured && firestore) {
-      await firestore.collection('reports').doc(id).set(doc);
-      return doc;
-    }
-    memoryStore.reports.set(id, doc);
-    return doc;
   }
 };
-

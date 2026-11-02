@@ -7,6 +7,7 @@ import rateLimit from 'express-rate-limit';
 import healthRoutes from './routes/health.js';
 import authRoutes from './routes/auth.js';
 import studyRoutes from './routes/study.js';
+import networkRoutes from './routes/network.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -49,6 +50,7 @@ app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 app.use('/api', healthRoutes);
 app.use('/api', authRoutes);
 app.use('/api', studyRoutes);
+app.use('/api', networkRoutes);
 
 // 6. 404 Handler
 app.use((req, res) => {
