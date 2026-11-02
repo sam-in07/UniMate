@@ -1,15 +1,16 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   BookOpen,
   HelpCircle,
-  MessageSquare,
   Calendar,
   FileQuestion,
   Bookmark,
   TrendingUp,
+  ShoppingBag,
   Users,
-  Heart,
+  MessageSquare,
+  User,
   ChevronLeft,
   ChevronRight,
   GraduationCap
@@ -29,10 +30,12 @@ const navItems = [
     ]
   },
   {
-    group: 'Community (Next)',
+    group: 'Student Network',
     items: [
-      { to: '/network', label: 'Student Network', icon: Users, badge: 'Phase 2', desc: 'Marketplace & Finder' },
-      { to: '/wellbeing', label: 'Wellbeing', icon: Heart, badge: 'Phase 3', desc: 'Check-in & Helplines' }
+      { to: '/marketplace', label: 'Book Marketplace', icon: ShoppingBag, desc: 'Buy & sell textbooks' },
+      { to: '/partners', label: 'Collaborator Finder', icon: Users, desc: 'Find study partners' },
+      { to: '/chat', label: 'In-App Messages', icon: MessageSquare, desc: 'Private peer chat' },
+      { to: '/profile', label: 'My Profile', icon: User, desc: 'Student info & settings' },
     ]
   }
 ];
@@ -88,11 +91,6 @@ export default function Sidebar({ collapsed, setCollapsed }) {
                     {!collapsed && (
                       <div className="flex-1 flex items-center justify-between">
                         <span>{item.label}</span>
-                        {item.badge && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-slate-200/70 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                            {item.badge}
-                          </span>
-                        )}
                       </div>
                     )}
                   </NavLink>
@@ -105,8 +103,8 @@ export default function Sidebar({ collapsed, setCollapsed }) {
         {/* Footer info in desktop sidebar */}
         {!collapsed && (
           <div className="p-4 border-t border-slate-200/60 dark:border-slate-800/60 text-[11px] text-slate-400">
-            <p className="font-medium text-slate-600 dark:text-slate-300">YUNet AIgnite 2026</p>
-            <p className="text-[10px] text-slate-400">Phase 1: Study Pillar</p>
+            <p className="font-semibold text-slate-700 dark:text-slate-300">UniMate</p>
+            <p className="text-[10px] text-slate-400">Two Pillars: Study & Network</p>
           </div>
         )}
       </aside>
@@ -138,42 +136,41 @@ export default function Sidebar({ collapsed, setCollapsed }) {
         </NavLink>
 
         <NavLink
-          to="/tutor"
+          to="/marketplace"
           className={({ isActive }) =>
             `flex flex-col items-center gap-0.5 px-2 py-1 text-[10px] font-medium transition-colors ${
               isActive ? 'text-brand-500' : 'text-slate-500 dark:text-slate-400'
             }`
           }
         >
-          <GraduationCap className="w-5 h-5" />
-          <span>Tutor</span>
+          <ShoppingBag className="w-5 h-5" />
+          <span>Books</span>
         </NavLink>
 
         <NavLink
-          to="/planner"
+          to="/partners"
           className={({ isActive }) =>
             `flex flex-col items-center gap-0.5 px-2 py-1 text-[10px] font-medium transition-colors ${
               isActive ? 'text-brand-500' : 'text-slate-500 dark:text-slate-400'
             }`
           }
         >
-          <Calendar className="w-5 h-5" />
-          <span>Plan</span>
+          <Users className="w-5 h-5" />
+          <span>Partners</span>
         </NavLink>
 
         <NavLink
-          to="/progress"
+          to="/chat"
           className={({ isActive }) =>
             `flex flex-col items-center gap-0.5 px-2 py-1 text-[10px] font-medium transition-colors ${
               isActive ? 'text-brand-500' : 'text-slate-500 dark:text-slate-400'
             }`
           }
         >
-          <TrendingUp className="w-5 h-5" />
-          <span>Progress</span>
+          <MessageSquare className="w-5 h-5" />
+          <span>Chat</span>
         </NavLink>
       </nav>
     </>
   );
 }
-

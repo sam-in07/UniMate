@@ -49,3 +49,4 @@ export const reportSchema = z.object({
 export const blockSchema = z.object({
   blockedUid: z.string().min(1)
 });
+

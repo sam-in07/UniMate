@@ -92,6 +92,47 @@ export const api = {
     return apiRequest(`/past-questions${query ? `?${query}` : ''}`);
   },
   submitPastQuestion: (data) => apiRequest('/past-questions', { method: 'POST', body: data }),
-  report: (data) => apiRequest('/reports', { method: 'POST', body: data })
+  report: (data) => apiRequest('/reports', { method: 'POST', body: data }),
+  blockUser: (blockedUid) => apiRequest('/blocks', { method: 'POST', body: { blockedUid } }),
+
+  // Student Network: Used-Book Marketplace
+  getListings: (params = {}) => {
+    const cleanParams = {};
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') cleanParams[k] = v;
+    });
+    const query = new URLSearchParams(cleanParams).toString();
+    return apiRequest(`/listings${query ? `?${query}` : ''}`);
+  },
+  getListing: (id) => apiRequest(`/listings/${id}`),
+  createListing: (data) => apiRequest('/listings', { method: 'POST', body: data }),
+  updateListing: (id, data) => apiRequest(`/listings/${id}`, { method: 'PUT', body: data }),
+  markListingSold: (id) => apiRequest(`/listings/${id}/sold`, { method: 'PUT' }),
+  deleteListing: (id) => apiRequest(`/listings/${id}`, { method: 'DELETE' }),
+  aiAssistListing: (data) => apiRequest('/listings/ai-assist', { method: 'POST', body: data }),
+  semanticSearchListings: (query) => apiRequest('/listings/search', { method: 'POST', body: { query } }),
+
+  // Student Network: Collaborator Finder & Connections
+  discoverPartners: (params = {}) => {
+    const cleanParams = {};
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') cleanParams[k] = v;
+    });
+    const query = new URLSearchParams(cleanParams).toString();
+    return apiRequest(`/partners/discover${query ? `?${query}` : ''}`);
+  },
+  sendConnection: (data) => apiRequest('/connections', { method: 'POST', body: data }),
+  getConnections: () => apiRequest('/connections'),
+  updateConnection: (id, status) => apiRequest(`/connections/${id}`, { method: 'PUT', body: { status } }),
+
+  // Student Network: In-App Chat
+  getChats: () => apiRequest('/chats'),
+  openChat: (data) => apiRequest('/chats', { method: 'POST', body: data }),
+  getChatMessages: (chatId) => apiRequest(`/chats/${chatId}/messages`),
+  sendMessage: (chatId, text) => apiRequest(`/chats/${chatId}/messages`, { method: 'POST', body: { text } }),
+
+  // Student Network: Notifications
+  getNotifications: () => apiRequest('/notifications'),
+  markNotificationRead: (id) => apiRequest(`/notifications/${id}/read`, { method: 'PUT' })
 };
 

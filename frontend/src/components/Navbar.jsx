@@ -1,21 +1,58 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
-import { Sun, Moon, Search, User, LogOut, Sparkles, Shield, ChevronDown } from 'lucide-react';
+import { api } from '../lib/api';
+import {
+  Sun,
+  Moon,
+  Search,
+  User,
+  LogOut,
+  Sparkles,
+  Bell,
+  ChevronDown,
+  ShoppingBag,
+  Users,
+  MessageSquare
+} from 'lucide-react';
 
 export default function Navbar({ onOpenCommandPalette }) {
   const { isDark, toggleTheme } = useTheme();
   const { currentUser, profile, isGuest, isAuthenticated, loginWithGoogle, loginAsGuest, logout } = useAuth();
   const [imageError, setImageError] = useState(false);
   const [userDropdown, setUserDropdown] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const location = useLocation();
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      api.getNotifications()
+        .then(res => {
+          if (res && res.unreadCount !== undefined) {
+            setUnreadCount(res.unreadCount);
+          }
+        })
+        .catch(() => {});
+      
+      const interval = setInterval(() => {
+        api.getNotifications()
+          .then(res => {
+            if (res && res.unreadCount !== undefined) {
+              setUnreadCount(res.unreadCount);
+            }
+          })
+          .catch(() => {});
+      }, 30000); // poll every 30s
+      return () => clearInterval(interval);
+    }
+  }, [isAuthenticated]);
 
   return (
     <header className="sticky top-0 z-40 w-full glass-panel border-b border-slate-200/80 dark:border-slate-800/80 transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
         
-        {/* Left: Brand & Buildathon Badge */}
+        {/* Left: Brand & Buildathon Sticker */}
         <div className="flex items-center gap-3 sm:gap-5">
           <Link to="/" className="flex items-center gap-2.5 group">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 via-indigo-600 to-accent-violet flex items-center justify-center text-white font-bold shadow-soft group-hover:scale-105 transition-transform">
@@ -31,19 +68,19 @@ export default function Navbar({ onOpenCommandPalette }) {
                 </span>
               </div>
               <span className="text-[11px] text-slate-500 dark:text-slate-400 hidden sm:inline -mt-0.5">
-                Study smarter. Stay well.
+                Study smarter. Connect with students.
               </span>
             </div>
           </Link>
 
-          {/* Mandatory Buildathon Sticker with Text Fallback */}
-          <div className="h-9 flex items-center border-l border-slate-200 dark:border-slate-800 pl-3 sm:pl-4">
+          {/* Mandatory Buildathon Sticker */}
+          <div className="h-10 flex items-center border-l border-slate-200 dark:border-slate-800 pl-3 sm:pl-4">
             {!imageError ? (
               <img
                 src="/buildathon-sticker.png"
                 alt="Built For Ostad Presents YUNet AIgnite Buildathon 2026"
                 onError={() => setImageError(true)}
-                className="h-8 sm:h-9 object-contain drop-shadow-sm hover:opacity-90 transition-opacity"
+                className="h-9 sm:h-10 object-contain drop-shadow-sm hover:opacity-95 transition-opacity"
               />
             ) : (
               <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-rose-500/10 text-amber-700 dark:text-amber-300 border border-amber-300/60 dark:border-amber-700/60 shadow-sm">
@@ -64,7 +101,7 @@ export default function Navbar({ onOpenCommandPalette }) {
           >
             <div className="flex items-center gap-2">
               <Search className="w-3.5 h-3.5" />
-              <span>Search tools & study notes...</span>
+              <span>Search books, partners, tools...</span>
             </div>
             <kbd className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-[10px] font-mono">
               Ctrl+K
@@ -72,8 +109,25 @@ export default function Navbar({ onOpenCommandPalette }) {
           </button>
         </div>
 
-        {/* Right: Theme Toggle & User Actions */}
+        {/* Right: Actions, Notifications & User */}
         <div className="flex items-center gap-2 sm:gap-3">
+          
+          {/* Notifications Bell */}
+          {isAuthenticated && (
+            <Link
+              to="/partners?tab=requests"
+              className="relative p-2.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-transparent hover:border-slate-200 dark:hover:border-slate-700 transition-colors"
+              title="Notifications"
+            >
+              <Bell className="w-4 h-4" />
+              {unreadCount > 0 && (
+                <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-brand-600 text-white text-[9px] font-bold flex items-center justify-center animate-pulse">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </Link>
+          )}
+
           {/* Dark / Light Mode Toggle */}
           <button
             onClick={toggleTheme}
@@ -93,20 +147,20 @@ export default function Navbar({ onOpenCommandPalette }) {
                 {currentUser?.photoURL ? (
                   <img
                     src={currentUser.photoURL}
-                    alt={currentUser.displayName || 'User'}
+                    alt={profile?.displayName || currentUser?.displayName || 'Student'}
                     className="w-7 h-7 rounded-full object-cover ring-2 ring-brand-500/30"
                   />
                 ) : (
                   <div className="w-7 h-7 rounded-full bg-brand-100 dark:bg-brand-900/60 text-brand-600 dark:text-brand-300 flex items-center justify-center font-bold text-xs">
-                    {currentUser?.displayName?.[0] || 'U'}
+                    {(profile?.displayName || currentUser?.displayName || 'S')[0]}
                   </div>
                 )}
                 <div className="text-left hidden lg:block">
                   <p className="text-xs font-semibold text-slate-900 dark:text-white leading-tight">
-                    {profile?.displayName || currentUser?.displayName || 'Student'}
+                    {profile?.displayName || currentUser?.displayName || (isGuest ? 'Guest Student' : 'Google Student')}
                   </p>
                   <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                    {isGuest ? 'Guest Session' : 'Verified Google'}
+                    {isGuest ? 'Guest (Read-only)' : 'Google Account'}
                   </p>
                 </div>
                 <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
@@ -119,19 +173,21 @@ export default function Navbar({ onOpenCommandPalette }) {
                 >
                   <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-800 mb-1">
                     <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                      {currentUser?.displayName || 'Student'}
+                      {profile?.displayName || currentUser?.displayName || (isGuest ? 'Guest Student' : 'Student')}
                     </p>
                     <p className="text-[11px] text-slate-500 truncate">
-                      {currentUser?.email || (isGuest ? 'Guest (Local History Stored)' : '')}
+                      {currentUser?.email || (isGuest ? 'Guest Mode' : '')}
                     </p>
-                    {isGuest && (
-                      <span className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 font-medium">
-                        Guest Account
-                      </span>
-                    )}
+                    <span className={`inline-block mt-1 text-[10px] px-2 py-0.5 rounded font-medium ${
+                      isGuest
+                        ? 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300'
+                        : 'bg-brand-100 dark:bg-brand-950 text-brand-700 dark:text-brand-300'
+                    }`}>
+                      {isGuest ? 'Guest Student' : 'Google Student'}
+                    </span>
                   </div>
 
-                  {isGuest && (
+                  {isGuest ? (
                     <button
                       onClick={() => {
                         setUserDropdown(false);
@@ -139,17 +195,26 @@ export default function Navbar({ onOpenCommandPalette }) {
                       }}
                       className="w-full text-left px-3 py-2 text-xs font-semibold text-brand-600 dark:text-brand-400 hover:bg-brand-50 dark:hover:bg-brand-950/50 rounded-xl transition-colors mb-1"
                     >
-                      Upgrade to Google Login
+                      Sign In with Google
                     </button>
+                  ) : (
+                    <Link
+                      to="/profile"
+                      onClick={() => setUserDropdown(false)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
+                    >
+                      <User className="w-3.5 h-3.5 text-brand-500" />
+                      <span>My Profile & Skills</span>
+                    </Link>
                   )}
 
                   <Link
-                    to="/progress"
+                    to="/chat"
                     onClick={() => setUserDropdown(false)}
                     className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
                   >
-                    <Sparkles className="w-3.5 h-3.5 text-brand-500" />
-                    <span>My Learning Analytics</span>
+                    <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>In-App Messages</span>
                   </Link>
 
                   <button
@@ -187,4 +252,3 @@ export default function Navbar({ onOpenCommandPalette }) {
     </header>
   );
 }
-
