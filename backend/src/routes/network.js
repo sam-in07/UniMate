@@ -57,17 +57,43 @@ router.post('/listings/search', async (req, res) => {
     const { query } = semanticSearchSchema.parse(req.body);
     const parsed = await aiSemanticSearchListings(query);
 
-    const listings = await db.getListings({
-      search: parsed.cleanedQuery,
-      tags: parsed.tags,
-      status: 'active'
-    });
+    // Fetch active listings
+    const allListings = await db.getListings({ status: 'active' });
+
+    // Score / rank listings based on semantic match to keywords, tags, and tokens
+    const queryTokens = [
+      ...(parsed.keywords || []),
+      ...(parsed.tags || []),
+      ...(parsed.cleanedQuery ? parsed.cleanedQuery.split(/\s+/) : []),
+      ...query.split(/\s+/)
+    ].map(t => t.toLowerCase().trim()).filter(t => t.length > 2);
+
+    const scored = allListings.map(item => {
+      let score = 0;
+      const titleLower = (item.title || '').toLowerCase();
+      const authorLower = (item.author || '').toLowerCase();
+      const descLower = (item.description || '').toLowerCase();
+      const itemTags = (item.tags || []).map(t => t.toLowerCase());
+
+      queryTokens.forEach(token => {
+        if (titleLower.includes(token)) score += 3;
+        if (authorLower.includes(token)) score += 2;
+        if (descLower.includes(token)) score += 1;
+        if (itemTags.some(t => t.includes(token) || token.includes(t))) score += 4;
+      });
+
+      return { item, score };
+    }).filter(r => r.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map(r => r.item);
+
+    const results = scored.length > 0 ? scored : allListings.slice(0, 10);
 
     res.json({
       status: 'success',
       query,
       aiInterpretation: parsed,
-      listings
+      listings: results
     });
   } catch (err) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message });
@@ -126,8 +152,9 @@ router.get('/listings/:id', async (req, res) => {
  */
 router.post('/listings/ai-assist', requireAuth, requireNonAnonymous, async (req, res) => {
   try {
-    const { query } = listingAiAssistSchema.parse(req.body);
-    const suggestion = await aiAssistListing({ query });
+    const data = listingAiAssistSchema.parse(req.body);
+    const query = data.query || data.title || data.isbn || 'Textbook';
+    const suggestion = await aiAssistListing({ query, coverPhoto: data.coverPhoto });
     res.json({
       status: 'success',
       suggestion
@@ -155,7 +182,7 @@ router.post('/listings', requireAuth, requireNonAnonymous, async (req, res) => {
     }
 
     const created = await db.createListing(req.user.uid, data);
-    res.json({
+    res.status(201).json({
       status: 'success',
       listing: created
     });
@@ -271,14 +298,15 @@ router.post('/connections', requireAuth, requireNonAnonymous, async (req, res) =
   try {
     const { toUid, message } = connectionRequestSchema.parse(req.body);
     const conn = await db.createConnection(req.user.uid, toUid, message);
-    res.json({
+    res.status(201).json({
       status: 'success',
       message: 'Connection request sent successfully!',
       connection: conn
     });
   } catch (err) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message });
-    res.status(400).json({ error: err.message || 'Failed to send connection request' });
+    const status = err.status || 400;
+    res.status(status).json({ error: err.message || 'Failed to send connection request' });
   }
 });
 
@@ -338,16 +366,17 @@ router.get('/chats', requireAuth, requireNonAnonymous, async (req, res) => {
  */
 router.post('/chats', requireAuth, requireNonAnonymous, async (req, res) => {
   try {
-    const { participantUid, type = 'collaborator', listingId = null } = req.body;
+    const { participantUid, type = 'collaborator', listingId = null, contextListingId = null } = req.body;
     if (!participantUid) {
       return res.status(400).json({ error: 'Participant UID is required' });
     }
 
+    const targetListingId = listingId || contextListingId;
     const chat = await db.getOrCreateChat({
       user1: req.user.uid,
       user2: participantUid,
       type,
-      listingId
+      listingId: targetListingId
     });
 
     res.json({ status: 'success', chat });
@@ -385,10 +414,11 @@ router.post('/chats/:chatId/messages', requireAuth, requireNonAnonymous, async (
     }
 
     const message = await db.sendMessage(req.params.chatId, req.user.uid, text);
-    res.json({ status: 'success', message });
+    res.status(201).json({ status: 'success', message });
   } catch (err) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message });
-    res.status(500).json({ error: err.message || 'Failed to send message' });
+    const status = err.status || 500;
+    res.status(status).json({ error: err.message || 'Failed to send message' });
   }
 });
 

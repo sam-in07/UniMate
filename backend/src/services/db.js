@@ -216,6 +216,13 @@ export const db = {
       throw new Error('You cannot connect with yourself.');
     }
 
+    const isBlocked = await this.isBlockedBetween(fromUid, toUid);
+    if (isBlocked) {
+      const err = new Error('You cannot connect with this student.');
+      err.status = 403;
+      throw err;
+    }
+
     // Check existing connection in either direction
     const snap1 = await firestore.collection('connections')
       .where('fromUid', '==', fromUid)
@@ -563,6 +570,18 @@ export const db = {
       .where('blockerUid', '==', blockerUid)
       .get();
     return snap.docs.map(d => d.data().blockedUid);
+  },
+
+  async isBlockedBetween(uid1, uid2) {
+    if (!isFirebaseConfigured || !firestore) return false;
+    try {
+      const b1 = await firestore.collection('blocks').doc(`block_${uid1}_${uid2}`).get();
+      if (b1.exists) return true;
+      const b2 = await firestore.collection('blocks').doc(`block_${uid2}_${uid1}`).get();
+      return b2.exists;
+    } catch {
+      return false;
+    }
   },
 
   // -------------------------------------------------------------

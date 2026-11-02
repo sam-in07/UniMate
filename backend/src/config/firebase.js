@@ -13,9 +13,17 @@ try {
   // 1. Primary: JSON file path from FIREBASE_SERVICE_ACCOUNT_PATH
   const accountPathEnv = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
   if (accountPathEnv) {
-    const resolvedPath = path.isAbsolute(accountPathEnv)
+    let resolvedPath = path.isAbsolute(accountPathEnv)
       ? accountPathEnv
       : path.resolve(process.cwd(), accountPathEnv);
+
+    if (!fs.existsSync(resolvedPath)) {
+      // Also try relative to current directory if launched from backend subdir
+      const altPath = path.resolve(process.cwd(), path.basename(accountPathEnv));
+      if (fs.existsSync(altPath)) {
+        resolvedPath = altPath;
+      }
+    }
 
     if (fs.existsSync(resolvedPath)) {
       try {
@@ -55,10 +63,14 @@ try {
     process.env.FIREBASE_PRIVATE_KEY
   ) {
     try {
+      let cleanKey = process.env.FIREBASE_PRIVATE_KEY.trim();
+      cleanKey = cleanKey.replace(/^["']/, '').replace(/["'],?\s*$/, '').trim();
+      cleanKey = cleanKey.replace(/\\n/g, '\n');
+
       credential = admin.credential.cert({
         projectId: process.env.FIREBASE_PROJECT_ID,
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+        privateKey: cleanKey,
       });
       projectId = process.env.FIREBASE_PROJECT_ID;
     } catch (certErr) {

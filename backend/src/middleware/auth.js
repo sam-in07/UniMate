@@ -17,6 +17,23 @@ export async function requireAuth(req, res, next) {
 
   const token = authHeader.split('Bearer ')[1].trim();
 
+  // Test environment helper: allow simulated tokens during automated test runs only
+  if (process.env.NODE_ENV === 'test' && token.startsWith('test-token:')) {
+    const parts = token.split(':');
+    const uid = parts[1];
+    const isAnonymous = parts[2] === 'guest';
+    const displayName = parts[3] || (isAnonymous ? 'Guest Student' : 'Student');
+    req.user = {
+      uid,
+      email: isAnonymous ? null : `${uid}@campus.ac.bd`,
+      displayName,
+      photoURL: null,
+      isAnonymous,
+      isDevFallback: false
+    };
+    return next();
+  }
+
   // 1. Real Firebase Admin verification
   if (isFirebaseConfigured && auth) {
     try {

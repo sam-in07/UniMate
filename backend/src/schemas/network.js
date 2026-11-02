@@ -19,8 +19,12 @@ export const listingCreateSchema = z.object({
 export const listingUpdateSchema = listingCreateSchema.partial();
 
 export const listingAiAssistSchema = z.object({
-  query: z.string().min(2).max(200),
+  query: z.string().min(2).max(200).optional(),
+  title: z.string().min(2).max(200).optional(),
+  isbn: z.string().max(50).optional(),
   coverPhoto: z.string().max(1500000).optional()
+}).refine(data => data.query || data.title || data.isbn || data.coverPhoto, {
+  message: 'Please provide at least a query, title, ISBN, or photo'
 });
 
 export const semanticSearchSchema = z.object({

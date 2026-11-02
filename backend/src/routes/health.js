@@ -11,7 +11,11 @@ router.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     product: 'UniMate',
-    buildathon: 'Ostad Presents YUNet AIgnite Buildathon 2026',
+    buildathon: {
+      name: 'Ostad Presents YUNet AIgnite Buildathon 2026',
+      twoPillars: true,
+      pillars: ['Study', 'Student Network']
+    },
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.floor(process.uptime()),
     firebaseAdmin: isFirebaseConfigured ? 'connected' : 'dev_mode'

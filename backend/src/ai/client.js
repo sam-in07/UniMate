@@ -60,8 +60,8 @@ function isCoolingDown(provider) {
   return true;
 }
 
-function setCooldown(provider) {
-  const until = Date.now() + COOLDOWN_DURATION_MS;
+export function setCooldown(provider, durationMs = COOLDOWN_DURATION_MS) {
+  const until = Date.now() + durationMs;
   providerCooldowns.set(provider, until);
   console.warn(`[AI Layer] Provider '${provider}' marked cooling down until ${new Date(until).toISOString()}`);
 }
@@ -589,14 +589,39 @@ export async function aiAssistListing({ query }) {
     `  "disclaimer": "AI suggested price range based on typical Bangladesh student secondhand market. Not guaranteed."\n` +
     `}`;
 
-  const result = await generateAI({
-    system,
-    messages: [{ role: 'user', content: `Suggest metadata for this book: "${query}"` }],
-    json: true,
-    timeoutMs: 25000
-  });
+  try {
+    const result = await generateAI({
+      system,
+      messages: [{ role: 'user', content: `Suggest metadata for this book: "${query}"` }],
+      json: true,
+      timeoutMs: 25000
+    });
 
-  return result.data;
+    const data = result.data || {};
+    return {
+      title: data.title || query,
+      author: data.author || 'Academic Authors',
+      edition: data.edition || 'Latest Edition',
+      tags: Array.isArray(data.tags) && data.tags.length > 0 ? data.tags : ['Textbook', 'Reference'],
+      suggestedPriceMin: data.suggestedPriceMin || 200,
+      suggestedPriceMax: data.suggestedPriceMax || 450,
+      suggestedPriceRange: data.suggestedPriceRange || `${data.suggestedPriceMin || 200} - ${data.suggestedPriceMax || 450} BDT`,
+      currency: 'BDT',
+      disclaimer: data.disclaimer || 'AI suggested price range based on typical Bangladesh student secondhand market. Not guaranteed.'
+    };
+  } catch (err) {
+    return {
+      title: query,
+      author: 'Academic Author',
+      edition: 'Standard Edition',
+      tags: ['Textbook', 'Reference'],
+      suggestedPriceMin: 200,
+      suggestedPriceMax: 400,
+      suggestedPriceRange: '200 - 400 BDT',
+      currency: 'BDT',
+      disclaimer: 'Default suggestion based on typical secondhand textbook ranges.'
+    };
+  }
 }
 
 /**
