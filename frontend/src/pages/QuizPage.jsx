@@ -372,7 +372,7 @@ export default function QuizPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Integration Card 1: Books */}
                 <Link
-                  to={`/network?search=${encodeURIComponent(weakTopics[0])}&tab=books`}
+                  to={`/marketplace?search=${encodeURIComponent(weakTopics[0])}`}
                   className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 hover:border-brand-500 hover:shadow-md transition-all flex items-start gap-3 group"
                 >
                   <div className="w-10 h-10 rounded-xl bg-brand-500/10 text-brand-500 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
@@ -390,7 +390,7 @@ export default function QuizPage() {
 
                 {/* Integration Card 2: Partner */}
                 <Link
-                  to={`/network?filter=${encodeURIComponent(weakTopics[0])}&tab=partners`}
+                  to={`/partners?filter=${encodeURIComponent(weakTopics[0])}`}
                   className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 hover:border-brand-500 hover:shadow-md transition-all flex items-start gap-3 group"
                 >
                   <div className="w-10 h-10 rounded-xl bg-accent-amber/10 text-accent-amber flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">

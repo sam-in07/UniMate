@@ -242,7 +242,7 @@ export default function ProgressPage() {
             {/* Differentiator Action Cards */}
             <div className="pt-4 border-t border-slate-200 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Link
-                to={`/network?search=${encodeURIComponent(weakTopics[0]?.topic || '')}&tab=books`}
+                to={`/marketplace?search=${encodeURIComponent(weakTopics[0]?.topic || '')}`}
                 className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 hover:border-brand-500 transition-all flex items-center gap-3 group"
               >
                 <div className="w-10 h-10 rounded-xl bg-brand-500/10 text-brand-500 flex items-center justify-center group-hover:scale-105 transition-transform">
@@ -257,7 +257,7 @@ export default function ProgressPage() {
               </Link>
 
               <Link
-                to={`/network?filter=${encodeURIComponent(weakTopics[0]?.topic || '')}&tab=partners`}
+                to={`/partners?filter=${encodeURIComponent(weakTopics[0]?.topic || '')}`}
                 className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 hover:border-amber-500 transition-all flex items-center gap-3 group"
               >
                 <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center group-hover:scale-105 transition-transform">

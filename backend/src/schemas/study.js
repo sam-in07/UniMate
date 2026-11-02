@@ -132,6 +132,7 @@ export const userProfileSchema = z.object({
   lookingFor: z.array(
     z.enum(['study partner', 'conference team', 'paper co-author', 'project mate'])
   ).default([]),
-  availability: z.string().max(100).default('Flexible')
+  availability: z.string().max(100).default('Flexible'),
+  isProfileHidden: z.boolean().default(false).optional()
 });
 

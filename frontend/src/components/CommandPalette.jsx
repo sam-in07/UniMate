@@ -10,6 +10,10 @@ import {
   FileQuestion,
   Bookmark,
   TrendingUp,
+  ShoppingBag,
+  Users,
+  MessageSquare,
+  User,
   X,
   Sparkles
 } from 'lucide-react';
@@ -22,6 +26,10 @@ const commands = [
   { id: 'past-questions', title: 'Past Questions Bank', subtitle: 'Search student-contributed question papers', icon: FileQuestion, path: '/past-questions' },
   { id: 'library', title: 'My Saved Library', subtitle: 'View all saved materials, summaries, and quizzes', icon: Bookmark, path: '/library' },
   { id: 'progress', title: 'Study Progress & Readiness', subtitle: 'Track weak topics, scores, and exam readiness', icon: TrendingUp, path: '/progress' },
+  { id: 'marketplace', title: 'Used-Book Marketplace', subtitle: 'Buy & sell textbooks with peer students', icon: ShoppingBag, path: '/marketplace' },
+  { id: 'partners', title: 'Collaborator Finder', subtitle: 'Find study partners and project teammates', icon: Users, path: '/partners' },
+  { id: 'chat', title: 'In-App Messages', subtitle: 'Chat with buyers, sellers, and study partners', icon: MessageSquare, path: '/chat' },
+  { id: 'profile', title: 'Student Profile', subtitle: 'Edit academic info, skills, and preferences', icon: User, path: '/profile' },
 ];
 
 export default function CommandPalette({ isOpen, onClose }) {

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import CommandPalette from './components/CommandPalette';
@@ -13,8 +13,10 @@ import ExamPlannerPage from './pages/ExamPlannerPage';
 import PastQuestionsPage from './pages/PastQuestionsPage';
 import LibraryPage from './pages/LibraryPage';
 import ProgressPage from './pages/ProgressPage';
-import NetworkPlaceholder from './pages/NetworkPlaceholder';
-import WellbeingPlaceholder from './pages/WellbeingPlaceholder';
+import MarketplacePage from './pages/MarketplacePage';
+import PartnersPage from './pages/PartnersPage';
+import ChatPage from './pages/ChatPage';
+import ProfilePage from './pages/ProfilePage';
 import NotFoundPage from './pages/NotFoundPage';
 
 export default function App() {
@@ -38,6 +40,8 @@ export default function App() {
         <main className={`flex-1 transition-all ${!isLanding ? 'pb-20 md:pb-6' : ''}`}>
           <Routes>
             <Route path="/" element={<LandingPage />} />
+            
+            {/* Study Pillar */}
             <Route path="/summarizer" element={<SummarizerPage />} />
             <Route path="/quiz" element={<QuizPage />} />
             <Route path="/tutor" element={<TutorPage />} />
@@ -45,8 +49,15 @@ export default function App() {
             <Route path="/past-questions" element={<PastQuestionsPage />} />
             <Route path="/library" element={<LibraryPage />} />
             <Route path="/progress" element={<ProgressPage />} />
-            <Route path="/network" element={<NetworkPlaceholder />} />
-            <Route path="/wellbeing" element={<WellbeingPlaceholder />} />
+
+            {/* Student Network Pillar */}
+            <Route path="/marketplace" element={<MarketplacePage />} />
+            <Route path="/partners" element={<PartnersPage />} />
+            <Route path="/chat" element={<ChatPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/network" element={<Navigate to="/marketplace" replace />} />
+
+            {/* 404 Catch-All */}
             <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </main>
@@ -61,4 +72,3 @@ export default function App() {
     </div>
   );
 }
-
