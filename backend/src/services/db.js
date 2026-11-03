@@ -45,8 +45,11 @@ export const db = {
     if (!isFirebaseConfigured || !firestore) {
       throw new Error('Firebase credentials not configured. Cloud Firestore is required for user profiles.');
     }
-    const record = { ...data, updatedAt: new Date().toISOString() };
-    await firestore.collection('users').doc(uid).set(record, { merge: true });
+    const ref = firestore.collection('users').doc(uid);
+    const existing = await ref.get();
+    const existingData = existing.exists ? existing.data() : {};
+    const record = { ...existingData, ...data, updatedAt: new Date().toISOString() };
+    await ref.set(record, { merge: true });
     return { uid, ...record };
   },
 

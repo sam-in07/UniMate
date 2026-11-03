@@ -82,8 +82,11 @@ async function runThreeIssuesSuite() {
     // -------------------------------------------------------------
     console.log('\n--- Testing Issue 2: Profile Contact Info & Research Links Privacy ---');
 
-    const userA_Token = getTestToken('userAlice', false, 'Alice Researcher');
-    const userB_Token = getTestToken('userBob', false, 'Bob Student');
+    const testRun = Date.now();
+    const uidAlice = `alice_${testRun}`;
+    const uidBob = `bob_${testRun}`;
+    const userA_Token = getTestToken(uidAlice, false, 'Alice Researcher');
+    const userB_Token = getTestToken(uidBob, false, 'Bob Student');
 
     await test('Reject invalid research URL host (backend validation)', async () => {
       const res = await fetch(`${baseUrl}/api/me`, {
@@ -143,23 +146,23 @@ async function runThreeIssuesSuite() {
       });
       const data = await res.json();
       if (res.status !== 200) throw new Error(`Expected 200, got ${res.status}: ${data.error}`);
-      if (data.profile.contactEmail !== 'alice.private@univ.ac.bd') {
-        throw new Error(`Expected own profile to show contactEmail, got ${data.profile.contactEmail}`);
+      if (data.user.contactEmail !== 'alice.private@univ.ac.bd') {
+        throw new Error(`Expected own profile to show contactEmail, got ${data.user.contactEmail}`);
       }
     });
 
     await test('User B fetching User A via /api/users/:uid CANNOT see contact info when not connected', async () => {
-      const res = await fetch(`${baseUrl}/api/users/userAlice`, {
+      const res = await fetch(`${baseUrl}/api/users/${uidAlice}`, {
         headers: { Authorization: `Bearer ${userB_Token}` }
       });
       const data = await res.json();
       if (res.status !== 200) throw new Error(`Expected 200, got ${res.status}`);
-      if (data.profile.contactEmail || data.profile.phoneNumber) {
-        throw new Error(`LEAK: Contact email or phone was exposed to non-connected user! Email: ${data.profile.contactEmail}, Phone: ${data.profile.phoneNumber}`);
+      if (data.user.contactEmail || data.user.phoneNumber) {
+        throw new Error(`LEAK: Contact email or phone was exposed to non-connected user! Email: ${data.user.contactEmail}, Phone: ${data.user.phoneNumber}`);
       }
       // Public research links should be accessible
-      if (data.profile.scholarUrl !== 'https://scholar.google.com/citations?user=alice123') {
-        throw new Error(`Expected public scholarUrl to be visible, got ${data.profile.scholarUrl}`);
+      if (data.user.scholarUrl !== 'https://scholar.google.com/citations?user=alice123') {
+        throw new Error(`Expected public scholarUrl to be visible, got ${data.user.scholarUrl}`);
       }
     });
 
@@ -169,7 +172,7 @@ async function runThreeIssuesSuite() {
       });
       const data = await res.json();
       if (res.status !== 200) throw new Error(`Expected 200, got ${res.status}`);
-      const aliceInDiscover = data.candidates?.find(c => c.uid === 'userAlice');
+      const aliceInDiscover = data.candidates?.find(c => c.uid === uidAlice);
       if (aliceInDiscover) {
         if (aliceInDiscover.contactEmail || aliceInDiscover.phoneNumber) {
           throw new Error('LEAK: contact info exposed in /api/partners/discover');
@@ -194,51 +197,51 @@ async function runThreeIssuesSuite() {
       });
 
       // User B checks User A
-      const res = await fetch(`${baseUrl}/api/users/userAlice`, {
+      const res = await fetch(`${baseUrl}/api/users/${uidAlice}`, {
         headers: { Authorization: `Bearer ${userB_Token}` }
       });
       const data = await res.json();
-      if (data.profile.contactEmail || data.profile.phoneNumber) {
+      if (data.user.contactEmail || data.user.phoneNumber) {
         throw new Error(`LEAK: Contact info exposed before connection was accepted!`);
       }
     });
 
     await test('Contact info is visible to User B once connection is accepted', async () => {
       // User B sends connection request to User A
-      const connRes = await fetch(`${baseUrl}/api/connections/request`, {
+      const connRes = await fetch(`${baseUrl}/api/connections`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${userB_Token}`
         },
         body: JSON.stringify({
-          toUid: 'userAlice',
-          note: 'Hi Alice, let us collaborate on research!'
+          toUid: uidAlice,
+          message: 'Hi Alice, let us collaborate on research!'
         })
       });
       const connData = await connRes.json();
       const connectionId = connData.connection.id;
 
       // User A accepts connection request
-      await fetch(`${baseUrl}/api/connections/${connectionId}/respond`, {
-        method: 'POST',
+      await fetch(`${baseUrl}/api/connections/${connectionId}`, {
+        method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${userA_Token}`
         },
-        body: JSON.stringify({ action: 'accept' })
+        body: JSON.stringify({ status: 'accepted' })
       });
 
       // User B checks User A profile
-      const res = await fetch(`${baseUrl}/api/users/userAlice`, {
+      const res = await fetch(`${baseUrl}/api/users/${uidAlice}`, {
         headers: { Authorization: `Bearer ${userB_Token}` }
       });
       const data = await res.json();
-      if (!data.profile.contactEmail || data.profile.contactEmail !== 'alice.private@univ.ac.bd') {
-        throw new Error(`Expected accepted connection to see contactEmail, got ${data.profile.contactEmail}`);
+      if (!data.user.contactEmail || data.user.contactEmail !== 'alice.private@univ.ac.bd') {
+        throw new Error(`Expected accepted connection to see contactEmail, got ${data.user.contactEmail}`);
       }
-      if (!data.profile.phoneNumber || data.profile.phoneNumber !== '+8801712345678') {
-        throw new Error(`Expected accepted connection to see phoneNumber, got ${data.profile.phoneNumber}`);
+      if (!data.user.phoneNumber || data.user.phoneNumber !== '+8801712345678') {
+        throw new Error(`Expected accepted connection to see phoneNumber, got ${data.user.phoneNumber}`);
       }
     });
 
