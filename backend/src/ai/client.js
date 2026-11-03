@@ -100,10 +100,14 @@ async function callOllamaCloud({ system, messages, json = false, timeoutMs = 450
     formattedMessages.push({ role: 'system', content: system });
   }
   for (const m of messages) {
-    formattedMessages.push({
+    const item = {
       role: m.role === 'assistant' ? 'assistant' : 'user',
       content: m.content
-    });
+    };
+    if (m.images && Array.isArray(m.images) && m.images.length > 0) {
+      item.images = m.images;
+    }
+    formattedMessages.push(item);
   }
 
   const requestBody = {
@@ -170,10 +174,14 @@ async function callGroq({ system, messages, json = false, timeoutMs = 45000 }) {
     formattedMessages.push({ role: 'system', content: system });
   }
   for (const m of messages) {
-    formattedMessages.push({
+    const item = {
       role: m.role === 'assistant' ? 'assistant' : 'user',
       content: m.content
-    });
+    };
+    if (m.images && Array.isArray(m.images) && m.images.length > 0) {
+      item.images = m.images;
+    }
+    formattedMessages.push(item);
   }
 
   async function executeRequest(activeModel) {

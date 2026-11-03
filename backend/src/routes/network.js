@@ -1,5 +1,6 @@
 import express from 'express';
 import { requireAuth, requireNonAnonymous } from '../middleware/auth.js';
+import { sanitizePublicProfile } from './auth.js';
 import { db } from '../services/db.js';
 import {
   aiCheckContentSafety,
@@ -279,10 +280,20 @@ router.get('/partners/discover', requireAuth, async (req, res) => {
       candidates: candidates.slice(0, 15)
     });
 
+    // Sanitize candidate profiles (research links included; email & phone strictly excluded)
+    const sanitizedMatches = ranked.map(m => {
+      const sanitized = sanitizePublicProfile(m, false);
+      return {
+        ...sanitized,
+        matchScore: m.matchScore || 70,
+        whyThisMatch: m.whyThisMatch
+      };
+    });
+
     res.json({
       status: 'success',
-      notice: 'UniMate connects verified university students. Never share home addresses or financial details.',
-      matches: ranked
+      notice: 'UniMate connects verified university students. Phone and email are private by default.',
+      matches: sanitizedMatches
     });
   } catch (err) {
     console.error('[Discover Partners Error]:', err.message);
@@ -313,11 +324,29 @@ router.post('/connections', requireAuth, requireNonAnonymous, async (req, res) =
 /**
  * GET /api/connections
  * List user's connection requests and accepted connections
+ * Enriched with peer info (Contact details only revealed for accepted connections if user enabled sharing)
  */
 router.get('/connections', requireAuth, async (req, res) => {
   try {
-    const connections = await db.getUserConnections(req.user.uid);
-    res.json({ status: 'success', connections });
+    const rawConnections = await db.getUserConnections(req.user.uid);
+
+    const enriched = await Promise.all(rawConnections.map(async (c) => {
+      const otherUid = c.fromUid === req.user.uid ? c.toUid : c.fromUid;
+      let otherProfile = null;
+      try {
+        const u = await db.getUser(otherUid);
+        if (u) {
+          const isAccepted = c.status === 'accepted';
+          otherProfile = sanitizePublicProfile(u, isAccepted);
+        }
+      } catch {}
+      return {
+        ...c,
+        otherUser: otherProfile
+      };
+    }));
+
+    res.json({ status: 'success', connections: enriched });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Failed to fetch connections' });
   }

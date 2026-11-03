@@ -106,14 +106,40 @@ export const examPlanRequestSchema = z.object({
   language: z.enum(['en', 'bn', 'mixed']).default('en')
 });
 
+// Helper for validating research profile URLs
+export function validateResearchUrl(val, expectedHost) {
+  if (!val || typeof val !== 'string' || val.trim() === '') return true;
+  try {
+    const trimmed = val.trim();
+    if (!trimmed.startsWith('https://')) return false;
+    const url = new URL(trimmed);
+    if (url.protocol !== 'https:') return false;
+    if (expectedHost) {
+      const host = url.hostname.toLowerCase();
+      if (expectedHost === 'scholar.google.com') {
+        return host === 'scholar.google.com' || host.includes('scholar.google.');
+      }
+      return host === expectedHost || host.endsWith('.' + expectedHost);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Past question submission schema
 export const pastQuestionSubmitSchema = z.object({
   course: z.string().min(2, 'Course name/code required').max(100),
   university: z.string().min(2, 'University name required').max(150),
-  year: z.number().int().min(2000).max(2035),
-  term: z.string().min(1).max(50),
-  questionsText: z.string().min(20, 'Question paper content required').max(30000),
-  topics: z.array(z.string()).optional()
+  year: z.coerce.number().int().min(2000).max(2035),
+  term: z.string().min(1, 'Term or semester is required').max(50),
+  questionsText: z.string().max(40000).optional().default(''),
+  topics: z.array(z.string()).optional(),
+  fileUrl: z.string().optional().nullable(),
+  fileName: z.string().max(255).optional().nullable(),
+  fileSize: z.number().optional().nullable()
+}).refine(data => (data.questionsText && data.questionsText.trim().length >= 10) || data.fileUrl || data.fileName, {
+  message: 'Please provide either question text (at least 10 characters) or attach a file.'
 });
 
 // User Profile update schema
@@ -133,6 +159,31 @@ export const userProfileSchema = z.object({
     z.enum(['study partner', 'conference team', 'paper co-author', 'project mate'])
   ).default([]),
   availability: z.string().max(100).default('Flexible'),
-  isProfileHidden: z.boolean().default(false).optional()
+  isProfileHidden: z.boolean().default(false).optional(),
+
+  // Private Contact Details (Never shown publicly; shared only with accepted connections when toggle is ON)
+  contactEmail: z.string().email('Please enter a valid email address').optional().or(z.literal('')),
+  phoneNumber: z.string().max(30).optional().or(z.literal('')),
+  shareContactWithConnections: z.boolean().default(false).optional(),
+
+  // Research Links (Public academic profiles; validated for https and specific sites)
+  scholarUrl: z.string().optional().or(z.literal('')).refine(v => validateResearchUrl(v, 'scholar.google.com'), {
+    message: 'Google Scholar URL must start with https:// and belong to scholar.google.com'
+  }),
+  researchGateUrl: z.string().optional().or(z.literal('')).refine(v => validateResearchUrl(v, 'researchgate.net'), {
+    message: 'ResearchGate URL must start with https:// and belong to researchgate.net'
+  }),
+  orcidUrl: z.string().optional().or(z.literal('')).refine(v => validateResearchUrl(v, 'orcid.org'), {
+    message: 'ORCID URL must start with https:// and belong to orcid.org'
+  }),
+  linkedinUrl: z.string().optional().or(z.literal('')).refine(v => validateResearchUrl(v, 'linkedin.com'), {
+    message: 'LinkedIn URL must start with https:// and belong to linkedin.com'
+  }),
+  githubUrl: z.string().optional().or(z.literal('')).refine(v => validateResearchUrl(v, 'github.com'), {
+    message: 'GitHub URL must start with https:// and belong to github.com'
+  }),
+  websiteUrl: z.string().optional().or(z.literal('')).refine(v => validateResearchUrl(v, null), {
+    message: 'Personal website URL must start with https://'
+  })
 });
 
