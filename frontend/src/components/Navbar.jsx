@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
+import UserAvatar from './UserAvatar';
 import {
   Sun,
   Moon,
@@ -144,17 +145,14 @@ export default function Navbar({ onOpenCommandPalette }) {
                 onClick={() => setUserDropdown(!userDropdown)}
                 className="flex items-center gap-2 p-1.5 sm:px-3 sm:py-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60 transition-colors"
               >
-                {currentUser?.photoURL ? (
-                  <img
-                    src={currentUser.photoURL}
-                    alt={profile?.displayName || currentUser?.displayName || 'Student'}
-                    className="w-7 h-7 rounded-full object-cover ring-2 ring-brand-500/30"
-                  />
-                ) : (
-                  <div className="w-7 h-7 rounded-full bg-brand-100 dark:bg-brand-900/60 text-brand-600 dark:text-brand-300 flex items-center justify-center font-bold text-xs">
-                    {(profile?.displayName || currentUser?.displayName || 'S')[0]}
-                  </div>
-                )}
+                <UserAvatar
+                  user={{
+                    photoURL: currentUser?.photoURL || profile?.photoURL,
+                    displayName: profile?.displayName || currentUser?.displayName
+                  }}
+                  size="sm"
+                  className="w-7 h-7 ring-2 ring-brand-500/30"
+                />
                 <div className="text-left hidden lg:block">
                   <p className="text-xs font-semibold text-slate-900 dark:text-white leading-tight">
                     {profile?.displayName || currentUser?.displayName || (isGuest ? 'Guest Student' : 'Google Student')}

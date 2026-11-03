@@ -23,11 +23,12 @@ export async function requireAuth(req, res, next) {
     const uid = parts[1];
     const isAnonymous = parts[2] === 'guest';
     const displayName = parts[3] || (isAnonymous ? 'Guest Student' : 'Student');
+    const photoURL = parts.slice(4).join(':') || null;
     req.user = {
       uid,
       email: isAnonymous ? null : `${uid}@campus.ac.bd`,
       displayName,
-      photoURL: null,
+      photoURL,
       isAnonymous,
       isDevFallback: false
     };

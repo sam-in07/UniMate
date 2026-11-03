@@ -92,6 +92,15 @@ export const api = {
     return apiRequest(`/past-questions${query ? `?${query}` : ''}`);
   },
   submitPastQuestion: (data) => apiRequest('/past-questions', { method: 'POST', body: data }),
+  extractPastQuestionFile: (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return apiRequest('/past-questions/extract-file', {
+      method: 'POST',
+      body: formData
+    });
+  },
+  getUserProfile: (uid) => apiRequest(`/users/${uid}`),
   report: (data) => apiRequest('/reports', { method: 'POST', body: data }),
   blockUser: (blockedUid) => apiRequest('/blocks', { method: 'POST', body: { blockedUid } }),
 

@@ -2,10 +2,13 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // User profile: only readable by authenticated users, only owner can write
+    // User profile:
+    // Direct client reads and writes are strictly restricted to the user's own document.
+    // Cross-user profile access (peer discovery, seller info) is mediated through the backend API
+    // using Firebase Admin SDK to strictly sanitize contact details (phone, email)
+    // unless the users are accepted connections AND sharing is explicitly enabled.
     match /users/{userId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if request.auth != null && request.auth.uid == userId;
     }
     
     // Materials (study uploads/extracted text): only accessible by owner

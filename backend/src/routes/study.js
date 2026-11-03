@@ -1,8 +1,10 @@
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
 import multer from 'multer';
 import pdfParse from 'pdf-parse';
 import { requireAuth, aiRateLimiter } from '../middleware/auth.js';
-import { generateAI } from '../ai/client.js';
+import { generateAI, transcribeImageWithVision } from '../ai/client.js';
 import { db } from '../services/db.js';
 import {
   summarizeRequestSchema,
@@ -139,7 +141,7 @@ router.post('/summarize', requireAuth, aiRateLimiter, async (req, res) => {
     });
   } catch (err) {
     if (err.name === 'ZodError') {
-      return res.status(400).json({ error: 'Invalid input', details: err.errors });
+      return res.status(400).json({ error: err.errors[0]?.message || 'Invalid input', details: err.errors });
     }
     console.error('[Summarize Error]:', err);
     res.status(500).json({ error: err.message || 'AI summarizer encountered an error' });
@@ -203,7 +205,7 @@ router.post('/quiz/generate', requireAuth, aiRateLimiter, async (req, res) => {
     });
   } catch (err) {
     if (err.name === 'ZodError') {
-      return res.status(400).json({ error: 'Invalid input', details: err.errors });
+      return res.status(400).json({ error: err.errors[0]?.message || 'Invalid input', details: err.errors });
     }
     console.error('[Quiz Generate Error]:', err);
     res.status(500).json({ error: err.message || 'AI quiz generator encountered an error' });
@@ -287,7 +289,7 @@ router.post('/explain', requireAuth, aiRateLimiter, async (req, res) => {
     });
   } catch (err) {
     if (err.name === 'ZodError') {
-      return res.status(400).json({ error: 'Invalid input', details: err.errors });
+      return res.status(400).json({ error: err.errors[0]?.message || 'Invalid input', details: err.errors });
     }
     console.error('[Explain Error]:', err);
     res.status(500).json({ error: err.message || 'AI tutor encountered an error' });
@@ -405,7 +407,7 @@ router.post('/plan/generate', requireAuth, aiRateLimiter, async (req, res) => {
     });
   } catch (err) {
     if (err.name === 'ZodError') {
-      return res.status(400).json({ error: 'Invalid input', details: err.errors });
+      return res.status(400).json({ error: err.errors[0]?.message || 'Invalid input', details: err.errors });
     }
     console.error('[Exam Plan Error]:', err);
     res.status(500).json({ error: err.message || 'Failed to generate study plan' });
@@ -580,6 +582,177 @@ router.get('/past-questions', requireAuth, async (req, res) => {
   }
 });
 
+// Helper to extract embedded JPEG image streams from a PDF buffer (for scanned PDFs)
+function extractImagesFromPdfBuffer(pdfBuffer) {
+  const images = [];
+  const startMarker = Buffer.from([0xFF, 0xD8, 0xFF]);
+  const endMarker = Buffer.from([0xFF, 0xD9]);
+
+  let startIndex = 0;
+  while (startIndex < pdfBuffer.length) {
+    const foundStart = pdfBuffer.indexOf(startMarker, startIndex);
+    if (foundStart === -1) break;
+
+    const foundEnd = pdfBuffer.indexOf(endMarker, foundStart + 3);
+    if (foundEnd === -1) break;
+
+    const imageBuffer = pdfBuffer.subarray(foundStart, foundEnd + 2);
+    // Ignore small icons (< 3KB)
+    if (imageBuffer.length > 3072) {
+      images.push(imageBuffer);
+      if (images.length >= 2) break; // Check first 2 page images
+    }
+
+    startIndex = foundEnd + 2;
+  }
+  return images;
+}
+
+// Storage directory for uploaded past question papers
+const PAST_QUESTIONS_DIR = path.resolve(process.cwd(), 'uploads/past-questions');
+try {
+  fs.mkdirSync(PAST_QUESTIONS_DIR, { recursive: true });
+} catch {}
+
+const pastQuestionUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (req, file, cb) => {
+    const allowed = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+    const lowerName = (file.originalname || '').toLowerCase();
+    if (
+      allowed.includes(file.mimetype) ||
+      lowerName.endsWith('.pdf') ||
+      lowerName.endsWith('.jpg') ||
+      lowerName.endsWith('.jpeg') ||
+      lowerName.endsWith('.png') ||
+      lowerName.endsWith('.webp')
+    ) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only PDF and image (JPG, PNG) files are supported.'));
+    }
+  }
+});
+
+/**
+ * POST /api/past-questions/extract-file
+ * Upload and extract text from question paper PDF or Image with Vision OCR fallback
+ */
+router.post('/past-questions/extract-file', requireAuth, (req, res, next) => {
+  pastQuestionUpload.single('file')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'File size exceeds maximum limit of 10 MB.' });
+      }
+      return res.status(400).json({ error: err.message || 'File upload failed.' });
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file provided. Please attach a PDF or image paper.' });
+    }
+
+    const isPdf = req.file.mimetype === 'application/pdf' || req.file.originalname.toLowerCase().endsWith('.pdf');
+    const isImage = req.file.mimetype.startsWith('image/') || /\.(jpg|jpeg|png|webp)$/i.test(req.file.originalname);
+
+    let extractedText = '';
+    let usedVision = false;
+
+    if (isPdf) {
+      try {
+        const parsed = await pdfParse(req.file.buffer);
+        extractedText = (parsed.text || '').trim();
+      } catch (parseErr) {
+        console.warn('[PDF Parse Notice]: standard text parse failed, checking for scanned images:', parseErr.message);
+      }
+
+      // If PDF has no extractable text (scanned), try vision model on embedded image
+      if (!extractedText || extractedText.length < 20) {
+        const images = extractImagesFromPdfBuffer(req.file.buffer);
+        if (images.length > 0) {
+          console.log(`[Past Questions] Scanned PDF detected. Found ${images.length} embedded page images. Sending to vision OCR...`);
+          const base64Img = images[0].toString('base64');
+          const ocrText = await transcribeImageWithVision(base64Img, 'image/jpeg');
+          if (ocrText && ocrText.length >= 15) {
+            extractedText = ocrText;
+            usedVision = true;
+          }
+        }
+      }
+
+      // If still no readable text extracted:
+      if (!extractedText || extractedText.length < 15) {
+        return res.status(400).json({
+          error: 'This PDF looks scanned and we could not read it. Please paste the text instead.'
+        });
+      }
+    } else if (isImage) {
+      const mime = req.file.mimetype || 'image/jpeg';
+      const base64Img = req.file.buffer.toString('base64');
+      const ocrText = await transcribeImageWithVision(base64Img, mime);
+      if (!ocrText || ocrText.length < 15) {
+        return res.status(400).json({
+          error: 'Could not read text from this image. Please ensure the image is clear or paste the text instead.'
+        });
+      }
+      extractedText = ocrText;
+      usedVision = true;
+    }
+
+    // Save file safely to disk
+    const ext = path.extname(req.file.originalname) || (isPdf ? '.pdf' : '.jpg');
+    const safeName = `pq_${Date.now()}_${Math.random().toString(36).substring(2, 9)}${ext}`;
+    const filePath = path.join(PAST_QUESTIONS_DIR, safeName);
+    fs.writeFileSync(filePath, req.file.buffer);
+
+    res.json({
+      status: 'success',
+      fileName: req.file.originalname,
+      fileSize: req.file.size,
+      fileUrl: `/api/past-questions/files/${safeName}`,
+      storageType: 'local_campus_storage',
+      usedVision,
+      extractedText
+    });
+  } catch (err) {
+    console.error('[Past Question File Extract Error]:', err);
+    res.status(500).json({ error: err.message || 'Error processing question paper file' });
+  }
+});
+
+/**
+ * GET /api/past-questions/files/:filename
+ * Secure streaming of uploaded question papers
+ */
+router.get('/past-questions/files/:filename', (req, res) => {
+  try {
+    const filename = path.basename(req.params.filename);
+    const filePath = path.join(PAST_QUESTIONS_DIR, filename);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Requested question paper file not found' });
+    }
+
+    const ext = path.extname(filename).toLowerCase();
+    const mimeTypes = {
+      '.pdf': 'application/pdf',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.webp': 'image/webp'
+    };
+
+    res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    fs.createReadStream(filePath).pipe(res);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to stream question paper file' });
+  }
+});
+
 router.post('/past-questions', requireAuth, async (req, res) => {
   try {
     const data = pastQuestionSubmitSchema.parse(req.body);
@@ -611,7 +784,7 @@ router.post('/past-questions', requireAuth, async (req, res) => {
     });
   } catch (err) {
     if (err.name === 'ZodError') {
-      return res.status(400).json({ error: 'Invalid input', details: err.errors });
+      return res.status(400).json({ error: err.errors[0]?.message || 'Invalid input', details: err.errors });
     }
     res.status(500).json({ error: err.message || 'Failed to submit past questions' });
   }

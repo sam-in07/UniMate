@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import UserAvatar from '../components/UserAvatar';
 import {
   Users,
   Search,
@@ -21,7 +22,13 @@ import {
   X,
   Loader2,
   Send,
-  HeartHandshake
+  HeartHandshake,
+  Mail,
+  Phone,
+  ExternalLink,
+  Globe,
+  BookOpen,
+  Lock
 } from 'lucide-react';
 
 export default function PartnersPage() {
@@ -274,13 +281,11 @@ export default function PartnersPage() {
                     {/* Student Identity */}
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-3">
-                        {peer.photoURL ? (
-                          <img src={peer.photoURL} alt={peer.displayName} className="w-12 h-12 rounded-2xl object-cover ring-2 ring-brand-500/20" />
-                        ) : (
-                          <div className="w-12 h-12 rounded-2xl bg-brand-500/10 text-brand-600 font-bold text-base flex items-center justify-center">
-                            {peer.displayName?.[0] || 'S'}
-                          </div>
-                        )}
+                        <UserAvatar
+                          user={{ photoURL: peer.photoURL, displayName: peer.displayName }}
+                          size="lg"
+                          className="w-12 h-12 rounded-2xl ring-2 ring-brand-500/20"
+                        />
                         <div>
                           <div className="flex items-center gap-2">
                             <h3 className="text-sm font-bold text-slate-900 dark:text-white">
@@ -361,6 +366,90 @@ export default function PartnersPage() {
                         </div>
                       )}
                     </div>
+
+                    {/* Research Links Icon Buttons */}
+                    {(peer.scholarUrl || peer.researchGateUrl || peer.orcidUrl || peer.linkedinUrl || peer.githubUrl || peer.websiteUrl) && (
+                      <div className="pt-2 border-t border-slate-100 dark:border-slate-800/60 flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] font-semibold text-slate-400 mr-1">Research:</span>
+                        {peer.scholarUrl && (
+                          <a
+                            href={peer.scholarUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 text-[10px] font-medium transition-colors"
+                            title="Google Scholar Profile"
+                          >
+                            <GraduationCap className="w-3 h-3 text-indigo-500" />
+                            <span>Scholar</span>
+                            <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                          </a>
+                        )}
+                        {peer.researchGateUrl && (
+                          <a
+                            href={peer.researchGateUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 text-[10px] font-medium transition-colors"
+                            title="ResearchGate Profile"
+                          >
+                            <BookOpen className="w-3 h-3 text-emerald-500" />
+                            <span>ResearchGate</span>
+                            <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                          </a>
+                        )}
+                        {peer.orcidUrl && (
+                          <a
+                            href={peer.orcidUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 text-[10px] font-medium transition-colors"
+                            title="ORCID Profile"
+                          >
+                            <span className="font-bold text-[10px] text-emerald-600">iD</span>
+                            <span>ORCID</span>
+                            <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                          </a>
+                        )}
+                        {peer.linkedinUrl && (
+                          <a
+                            href={peer.linkedinUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 hover:bg-sky-100 text-[10px] font-medium transition-colors"
+                            title="LinkedIn Profile"
+                          >
+                            <Globe className="w-3 h-3 text-sky-500" />
+                            <span>LinkedIn</span>
+                            <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                          </a>
+                        )}
+                        {peer.githubUrl && (
+                          <a
+                            href={peer.githubUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 text-[10px] font-medium transition-colors"
+                            title="GitHub Profile"
+                          >
+                            <Globe className="w-3 h-3 text-slate-600 dark:text-slate-400" />
+                            <span>GitHub</span>
+                            <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                          </a>
+                        )}
+                        {peer.websiteUrl && (
+                          <a
+                            href={peer.websiteUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-brand-50 dark:bg-brand-950/40 text-brand-700 dark:text-brand-300 hover:bg-brand-100 text-[10px] font-medium transition-colors"
+                            title="Personal Website"
+                          >
+                            <ExternalLink className="w-3 h-3 text-brand-500" />
+                            <span>Portfolio</span>
+                          </a>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Connect Action */}
@@ -436,7 +525,43 @@ export default function PartnersPage() {
                         "{conn.message}"
                       </p>
                     )}
-                    <span className="text-[10px] text-slate-400">
+
+                    {/* Shared Contact Details for Accepted Connections */}
+                    {conn.status === 'accepted' && (
+                      <div className="pt-2 text-[11px] space-y-1">
+                        {conn.otherUser?.contactShared && (conn.otherUser?.contactEmail || conn.otherUser?.phoneNumber) ? (
+                          <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-800 dark:text-emerald-300 space-y-1">
+                            <div className="flex items-center gap-1.5 font-bold text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                              <CheckCircle2 className="w-3 h-3" />
+                              <span>Shared Contact Details (Accepted Peer)</span>
+                            </div>
+                            {conn.otherUser.contactEmail && (
+                              <p className="flex items-center gap-1.5">
+                                <Mail className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                                <a href={`mailto:${conn.otherUser.contactEmail}`} className="underline hover:text-emerald-600">
+                                  {conn.otherUser.contactEmail}
+                                </a>
+                              </p>
+                            )}
+                            {conn.otherUser.phoneNumber && (
+                              <p className="flex items-center gap-1.5">
+                                <Phone className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                                <a href={`tel:${conn.otherUser.phoneNumber}`} className="underline hover:text-emerald-600">
+                                  {conn.otherUser.phoneNumber}
+                                </a>
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-[10px] text-slate-400 italic flex items-center gap-1">
+                            <Lock className="w-3 h-3" />
+                            <span>Contact info: Private (In-app chat available below)</span>
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    <span className="text-[10px] text-slate-400 block pt-1">
                       {new Date(conn.createdAt).toLocaleDateString()}
                     </span>
                   </div>

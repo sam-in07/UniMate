@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../lib/api';
 import { useToast } from '../context/ToastContext';
@@ -14,7 +14,11 @@ import {
   AlertCircle,
   X,
   Loader2,
-  CheckCircle2
+  CheckCircle2,
+  UploadCloud,
+  FileText,
+  Download,
+  Trash2
 } from 'lucide-react';
 
 export default function PastQuestionsPage() {
@@ -31,9 +35,19 @@ export default function PastQuestionsPage() {
     university: '',
     year: new Date().getFullYear(),
     term: 'Spring / Final',
-    questionsText: ''
+    questionsText: '',
+    fileUrl: '',
+    fileName: '',
+    fileSize: null
   });
+
+  const [attachedFile, setAttachedFile] = useState(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [fileError, setFileError] = useState('');
+  const [formErrors, setFormErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef(null);
 
   // Report modal state
   const [reportingId, setReportingId] = useState(null);
@@ -62,12 +76,111 @@ export default function PastQuestionsPage() {
     fetchQuestions();
   }, [search, selectedCourse, selectedUniversity]);
 
-  const handleUploadSubmit = async (e) => {
-    e.preventDefault();
-    if (!uploadData.course || !uploadData.university || !uploadData.questionsText) {
-      toast.error('Please fill in all required question details.');
+  const formatFileSize = (bytes) => {
+    if (!bytes || isNaN(bytes)) return '';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const handleFileProcess = async (file) => {
+    if (!file) return;
+
+    // Validate size (max 10MB)
+    const MAX_SIZE = 10 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      setFileError('File size exceeds the 10 MB limit. Please upload a smaller file or paste text directly.');
       return;
     }
+
+    // Validate type: PDF, JPG, PNG, WEBP
+    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+    const isAllowedExt = /\.(pdf|jpe?g|png|webp)$/i.test(file.name);
+    if (!allowedTypes.includes(file.type) && !isAllowedExt) {
+      setFileError('Only PDF documents and JPG/PNG images are supported.');
+      return;
+    }
+
+    setFileError('');
+    setUploadingFile(true);
+    setAttachedFile(file);
+
+    try {
+      const res = await api.extractPastQuestionFile(file);
+      setUploadData(prev => ({
+        ...prev,
+        fileUrl: res.fileUrl || '',
+        fileName: res.fileName || file.name,
+        fileSize: res.fileSize || file.size,
+        questionsText: prev.questionsText || res.extractedText || ''
+      }));
+      setFormErrors(prev => ({ ...prev, questionsText: null }));
+      toast.success(res.usedVision ? 'Scanned paper transcribed using AI vision!' : 'Question paper attached successfully!');
+    } catch (err) {
+      setFileError(err.message || 'Could not process question paper. Please paste text directly.');
+      setAttachedFile(null);
+      setUploadData(prev => ({ ...prev, fileUrl: '', fileName: '', fileSize: null }));
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
+  const removeAttachedFile = () => {
+    setAttachedFile(null);
+    setFileError('');
+    setUploadData(prev => ({
+      ...prev,
+      fileUrl: '',
+      fileName: '',
+      fileSize: null
+    }));
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleFileProcess(e.dataTransfer.files[0]);
+    }
+  };
+
+  const validateForm = () => {
+    const errors = {};
+    if (!uploadData.course.trim()) {
+      errors.course = 'Please provide the course code or name (e.g. CSE 205).';
+    }
+    if (!uploadData.university.trim()) {
+      errors.university = 'Please specify the university or college.';
+    }
+    if (!uploadData.term.trim()) {
+      errors.term = 'Please specify the exam term or semester.';
+    }
+
+    // Require either at least 10 chars of text OR an attached file
+    const hasEnoughText = uploadData.questionsText && uploadData.questionsText.trim().length >= 10;
+    const hasFile = Boolean(uploadData.fileUrl || uploadData.fileName);
+    if (!hasEnoughText && !hasFile) {
+      errors.questionsText = 'Please attach a question paper (PDF/Image) or paste at least 10 characters of questions.';
+    }
+
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleUploadSubmit = async (e) => {
+    e.preventDefault();
+    if (!validateForm()) return;
 
     setSubmitting(true);
     try {
@@ -79,8 +192,14 @@ export default function PastQuestionsPage() {
         university: '',
         year: new Date().getFullYear(),
         term: 'Spring / Final',
-        questionsText: ''
+        questionsText: '',
+        fileUrl: '',
+        fileName: '',
+        fileSize: null
       });
+      setAttachedFile(null);
+      setFileError('');
+      setFormErrors({});
       fetchQuestions();
     } catch (err) {
       toast.error(err.message || 'Failed to upload question paper');
@@ -130,8 +249,12 @@ export default function PastQuestionsPage() {
         </div>
 
         <button
-          onClick={() => setShowUploadModal(true)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-brand-600 hover:bg-brand-700 text-white font-semibold text-xs shadow-soft transition-all"
+          onClick={() => {
+            setFormErrors({});
+            setFileError('');
+            setShowUploadModal(true);
+          }}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-brand-600 hover:bg-brand-700 text-white font-semibold text-xs shadow-soft transition-all cursor-pointer"
         >
           <Plus className="w-4 h-4" />
           <span>Contribute Paper</span>
@@ -199,174 +322,366 @@ export default function PastQuestionsPage() {
             Be the first student to upload past questions for your course to help your campus community!
           </p>
           <button
-            onClick={() => setShowUploadModal(true)}
-            className="px-4 py-2 rounded-xl bg-brand-600 text-white text-xs font-semibold shadow-sm"
+            onClick={() => {
+              setFormErrors({});
+              setFileError('');
+              setShowUploadModal(true);
+            }}
+            className="px-4 py-2 rounded-xl bg-brand-600 text-white text-xs font-semibold shadow-sm cursor-pointer"
           >
             Upload Now
           </button>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {questions.map((item) => (
-            <motion.div
-              key={item.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="p-6 rounded-3xl glass-panel shadow-soft border border-slate-200 dark:border-slate-800 hover:shadow-soft-hover transition-all flex flex-col justify-between"
-            >
-              <div>
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                      {item.course}
-                    </h3>
-                    <p className="text-xs text-slate-500 flex items-center gap-1.5 mt-0.5">
-                      <School className="w-3.5 h-3.5" />
-                      <span>{item.university}</span>
-                      <span>•</span>
-                      <span>{item.year} ({item.term})</span>
-                    </p>
+          {questions.map((item) => {
+            const courseTitle = item.course || 'Untitled Course Paper';
+            const uniName = item.university || 'General University';
+            const termYear = [item.year, item.term].filter(Boolean).join(' • ') || 'Past Examination';
+            const previewText = (item.questionsText && item.questionsText.trim()) 
+              ? item.questionsText 
+              : (item.fileName ? `Original paper: ${item.fileName}` : 'Exam questions preview not available.');
+
+            const downloadUrl = item.fileUrl 
+              ? (item.fileUrl.startsWith('http') ? item.fileUrl : `${import.meta.env.VITE_API_BASE_URL || ''}${item.fileUrl}`)
+              : null;
+
+            return (
+              <motion.div
+                key={item.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="p-6 rounded-3xl glass-panel shadow-soft border border-slate-200 dark:border-slate-800 hover:shadow-soft-hover transition-all flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                        {courseTitle}
+                      </h3>
+                      <p className="text-xs text-slate-500 flex items-center gap-1.5 mt-0.5">
+                        <School className="w-3.5 h-3.5 shrink-0" />
+                        <span>{uniName}</span>
+                        <span>•</span>
+                        <span>{termYear}</span>
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={() => setReportingId(item.id)}
+                      className="p-1 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      title="Report question paper"
+                    >
+                      <Flag className="w-3.5 h-3.5" />
+                    </button>
                   </div>
 
-                  <button
-                    onClick={() => setReportingId(item.id)}
-                    className="p-1 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                    title="Report question paper"
-                  >
-                    <Flag className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                  {/* AI Topics */}
+                  {Array.isArray(item.topics) && item.topics.filter(Boolean).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 my-3">
+                      {item.topics.filter(Boolean).map((t, idx) => (
+                        <span
+                          key={idx}
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-300"
+                        >
+                          #{t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
 
-                {/* AI Tags */}
-                {item.topics && item.topics.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 my-3">
-                    {item.topics.map((t, idx) => (
-                      <span
-                        key={idx}
-                        className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-300"
+                  {/* Excerpt */}
+                  <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 text-xs text-slate-600 dark:text-slate-300 line-clamp-4 leading-relaxed font-mono">
+                    {previewText}
+                  </div>
+
+                  {/* PDF / Image Download Link */}
+                  {downloadUrl && (
+                    <div className="mt-3">
+                      <a
+                        href={downloadUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        download={item.fileName || 'exam-paper'}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/40 dark:hover:bg-brand-900/50 text-brand-700 dark:text-brand-300 text-xs font-semibold transition-colors border border-brand-200/50 dark:border-brand-800/50"
                       >
-                        #{t}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {/* Excerpt */}
-                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 text-xs text-slate-600 dark:text-slate-300 line-clamp-4 leading-relaxed font-mono">
-                  {item.questionsText}
+                        <Download className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate max-w-[220px]">
+                          {item.fileName ? `Download ${item.fileName}` : 'Download Paper (PDF)'}
+                        </span>
+                      </a>
+                    </div>
+                  )}
                 </div>
-              </div>
 
-              <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-                <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
-                  <CheckCircle2 className="w-3 h-3" />
-                  <span>Student Contributed</span>
-                </span>
-                <span>{new Date(item.createdAt).toLocaleDateString()}</span>
-              </div>
-            </motion.div>
-          ))}
+                <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+                  <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+                    <CheckCircle2 className="w-3 h-3 shrink-0" />
+                    <span>Student Contributed</span>
+                  </span>
+                  <span>
+                    {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : 'Recently'}
+                  </span>
+                </div>
+              </motion.div>
+            );
+          })}
         </div>
       )}
 
       {/* Upload Question Paper Modal */}
       {showUploadModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm overflow-y-auto">
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4"
+            className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4 my-8"
           >
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                Contribute Past Question Paper
-              </h3>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Contribute Past Question Paper
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Share exam papers to help fellow students prepare.
+                </p>
+              </div>
               <button
                 onClick={() => setShowUploadModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleUploadSubmit} className="space-y-3.5">
+            <form onSubmit={handleUploadSubmit} className="space-y-4">
+              
+              {/* Course Title */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Course Code & Title
+                  Course Code & Title *
                 </label>
                 <input
                   type="text"
-                  required
                   placeholder="e.g. CSE 205 Data Structures & Algorithms"
                   value={uploadData.course}
-                  onChange={(e) => setUploadData({ ...uploadData, course: e.target.value })}
-                  className="w-full text-xs p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none"
+                  onChange={(e) => {
+                    setUploadData({ ...uploadData, course: e.target.value });
+                    if (formErrors.course) setFormErrors({ ...formErrors, course: null });
+                  }}
+                  className={`w-full text-xs p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border ${
+                    formErrors.course ? 'border-rose-500' : 'border-slate-200 dark:border-slate-700'
+                  } focus:outline-none`}
                 />
+                {formErrors.course && (
+                  <p className="text-[11px] text-rose-500 mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3 inline shrink-0" />
+                    <span>{formErrors.course}</span>
+                  </p>
+                )}
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* University and Term */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    University / College
+                    University / College *
                   </label>
                   <input
                     type="text"
-                    required
                     placeholder="e.g. University of Dhaka"
                     value={uploadData.university}
-                    onChange={(e) => setUploadData({ ...uploadData, university: e.target.value })}
-                    className="w-full text-xs p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none"
+                    onChange={(e) => {
+                      setUploadData({ ...uploadData, university: e.target.value });
+                      if (formErrors.university) setFormErrors({ ...formErrors, university: null });
+                    }}
+                    className={`w-full text-xs p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border ${
+                      formErrors.university ? 'border-rose-500' : 'border-slate-200 dark:border-slate-700'
+                    } focus:outline-none`}
                   />
+                  {formErrors.university && (
+                    <p className="text-[11px] text-rose-500 mt-1 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3 inline shrink-0" />
+                      <span>{formErrors.university}</span>
+                    </p>
+                  )}
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Exam Year & Term
+                    Exam Term / Semester *
                   </label>
                   <input
                     type="text"
-                    required
                     placeholder="e.g. 2024 Fall Midterm"
                     value={uploadData.term}
-                    onChange={(e) => setUploadData({ ...uploadData, term: e.target.value })}
-                    className="w-full text-xs p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none"
+                    onChange={(e) => {
+                      setUploadData({ ...uploadData, term: e.target.value });
+                      if (formErrors.term) setFormErrors({ ...formErrors, term: null });
+                    }}
+                    className={`w-full text-xs p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border ${
+                      formErrors.term ? 'border-rose-500' : 'border-slate-200 dark:border-slate-700'
+                    } focus:outline-none`}
                   />
+                  {formErrors.term && (
+                    <p className="text-[11px] text-rose-500 mt-1 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3 inline shrink-0" />
+                      <span>{formErrors.term}</span>
+                    </p>
+                  )}
                 </div>
               </div>
 
+              {/* Drag & Drop File Upload */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Questions Text (AI will automatically tag topics)
+                  Upload Paper (PDF or Image, max 10 MB)
                 </label>
-                <textarea
-                  rows={6}
-                  required
-                  placeholder="Paste questions text or exam problem statements..."
-                  value={uploadData.questionsText}
-                  onChange={(e) => setUploadData({ ...uploadData, questionsText: e.target.value })}
-                  className="w-full text-xs p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none font-mono"
+                
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      handleFileProcess(e.target.files[0]);
+                    }
+                  }}
                 />
+
+                {!uploadData.fileUrl && !uploadingFile ? (
+                  <div
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition-all ${
+                      isDragging
+                        ? 'border-brand-500 bg-brand-50/50 dark:bg-brand-950/20'
+                        : 'border-slate-300 dark:border-slate-700 hover:border-brand-400 bg-slate-50/50 dark:bg-slate-800/30'
+                    }`}
+                  >
+                    <UploadCloud className="w-7 h-7 mx-auto text-slate-400 mb-1.5" />
+                    <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      Drag & drop your question paper here, or <span className="text-brand-600 dark:text-brand-400 underline">browse</span>
+                    </p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      PDF, JPG or PNG up to 10 MB • Text will be extracted with AI
+                    </p>
+                  </div>
+                ) : uploadingFile ? (
+                  <div className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-800 text-center flex flex-col items-center justify-center">
+                    <Loader2 className="w-6 h-6 animate-spin text-brand-600 dark:text-brand-400 mb-2" />
+                    <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                      Reading & transcribing paper with AI...
+                    </p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      Extracting text and scanning pages
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between p-3 rounded-2xl bg-brand-50 dark:bg-brand-950/30 border border-brand-200 dark:border-brand-800">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <FileText className="w-5 h-5 text-brand-600 dark:text-brand-400 shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                          {uploadData.fileName}
+                        </p>
+                        <p className="text-[10px] text-slate-500">
+                          {formatFileSize(uploadData.fileSize)} • Attached to question paper
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={removeAttachedFile}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-white dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                      title="Remove file"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
+                {/* File Error Notice */}
+                {fileError && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                    <p className="text-xs text-rose-700 dark:text-rose-300">
+                      {fileError}
+                    </p>
+                  </div>
+                )}
               </div>
 
-              <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800/60 text-[11px] text-slate-500">
-                AI will automatically analyze and extract topics (e.g. #BinarySearch, #Graphs).
+              {/* Questions Text */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Questions Text {uploadData.fileUrl ? '(Optional when file attached)' : '*'}
+                  </label>
+                  {uploadData.fileUrl && (
+                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                      ✓ File Attached
+                    </span>
+                  )}
+                </div>
+                
+                <textarea
+                  rows={5}
+                  placeholder={
+                    uploadData.fileUrl
+                      ? "Extracted questions will appear here. You can edit or leave empty."
+                      : "Paste exam question statements or problem descriptions here..."
+                  }
+                  value={uploadData.questionsText}
+                  onChange={(e) => {
+                    setUploadData({ ...uploadData, questionsText: e.target.value });
+                    if (formErrors.questionsText) setFormErrors({ ...formErrors, questionsText: null });
+                  }}
+                  className={`w-full text-xs p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border ${
+                    formErrors.questionsText ? 'border-rose-500' : 'border-slate-200 dark:border-slate-700'
+                  } focus:outline-none font-mono`}
+                />
+
+                {formErrors.questionsText && (
+                  <p className="text-[11px] text-rose-500 mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3 inline shrink-0" />
+                    <span>{formErrors.questionsText}</span>
+                  </p>
+                )}
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800/60 text-[11px] text-slate-500 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-brand-500 shrink-0" />
+                <span>AI will automatically analyze and extract topics (e.g. #BinaryTrees, #FourierTransform).</span>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowUploadModal(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-500"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-500 hover:text-slate-700 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting}
-                  className="px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold flex items-center gap-2"
+                  disabled={submitting || uploadingFile}
+                  className="px-5 py-2.5 rounded-2xl bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-2 shadow-sm cursor-pointer disabled:cursor-not-allowed"
                 >
-                  {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                  <span>Publish Paper</span>
+                  {submitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Publishing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      <span>Publish Paper</span>
+                    </>
+                  )}
                 </button>
               </div>
             </form>
@@ -403,14 +718,14 @@ export default function PastQuestionsPage() {
                 <button
                   type="button"
                   onClick={() => setReportingId(null)}
-                  className="px-3 py-1.5 rounded-xl text-xs text-slate-500"
+                  className="px-3 py-1.5 rounded-xl text-xs text-slate-500 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={reporting}
-                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold"
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold cursor-pointer"
                 >
                   {reporting ? 'Submitting...' : 'Submit Report'}
                 </button>
@@ -423,4 +738,3 @@ export default function PastQuestionsPage() {
     </div>
   );
 }
-

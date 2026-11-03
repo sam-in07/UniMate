@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import UserAvatar from '../components/UserAvatar';
 import {
   ShoppingBag,
   Search,
@@ -553,13 +554,7 @@ export default function MarketplacePage() {
                   <div className="mt-4 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800">
                     <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Seller Info</p>
                     <div className="flex items-center gap-3">
-                      {activeSeller?.photoURL ? (
-                        <img src={activeSeller.photoURL} alt="Seller" className="w-9 h-9 rounded-full object-cover" />
-                      ) : (
-                        <div className="w-9 h-9 rounded-full bg-brand-500/20 text-brand-600 font-bold flex items-center justify-center text-xs">
-                          {activeSeller?.displayName?.[0] || 'S'}
-                        </div>
-                      )}
+                      <UserAvatar user={activeSeller} size="md" />
                       <div>
                         <p className="text-xs font-bold text-slate-900 dark:text-white">
                           {activeSeller?.displayName || 'Campus Student'}

@@ -787,3 +787,96 @@ export async function checkAIHealth() {
     providers
   };
 }
+
+/**
+ * Vision transcription helper for scanned PDFs and question paper images
+ * Tries Ollama Cloud (gemma4:31b) first with images array, then Gemini vision fallback
+ */
+export async function transcribeImageWithVision(base64Image, mimeType = 'image/jpeg') {
+  const prompt = 'Please accurately transcribe all text, questions, numbers, and problem statements from this question paper image. Output only the transcribed academic text without preamble.';
+
+  // 1. Try Ollama Cloud first (gemma4:31b supports vision natively)
+  const ollamaKey = process.env.OLLAMA_API_KEY;
+  if (ollamaKey && !isProviderCoolingDown('ollama')) {
+    try {
+      const rawBase = process.env.OLLAMA_BASE_URL || 'https://ollama.com';
+      const baseUrl = rawBase.replace(/\/+$/, '');
+      const model = process.env.OLLAMA_MODEL || 'gemma4:31b';
+
+      const res = await fetch(`${baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${ollamaKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: 'user',
+              content: prompt,
+              images: [base64Image]
+            }
+          ],
+          stream: false
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const content = data.message?.content?.trim();
+        if (content && content.length > 15) {
+          console.log('[Vision OCR] Successfully transcribed image via Ollama Cloud');
+          return content;
+        }
+      }
+    } catch (ollamaErr) {
+      console.warn('[Vision OCR] Ollama vision transcription failed:', ollamaErr.message);
+    }
+  }
+
+  // 2. Try Gemini fallback if configured
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey && !isProviderCoolingDown('gemini')) {
+    try {
+      const model = cachedGeminiModel || process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': geminiKey
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { text: prompt },
+                {
+                  inlineData: {
+                    mimeType,
+                    data: base64Image
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const candidate = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (candidate && candidate.length > 15) {
+          console.log('[Vision OCR] Successfully transcribed image via Gemini vision');
+          return candidate;
+        }
+      }
+    } catch (geminiErr) {
+      console.warn('[Vision OCR] Gemini vision fallback failed:', geminiErr.message);
+    }
+  }
+
+  return null;
+}

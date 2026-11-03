@@ -63,6 +63,8 @@ serviceAccountKey.json
 # Build directories
 dist/
 build/
+uploads/
+backend/uploads/
 .cache/
 
 # OS and Editor files

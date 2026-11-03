@@ -1,6 +1,9 @@
 import admin from 'firebase-admin';
 import fs from 'fs';
 import path from 'path';
+import dotenv from 'dotenv';
+dotenv.config();
+dotenv.config({ path: path.resolve(process.cwd(), 'backend/.env') });
 
 let isFirebaseConfigured = false;
 let authInstance = null;
@@ -18,10 +21,13 @@ try {
       : path.resolve(process.cwd(), accountPathEnv);
 
     if (!fs.existsSync(resolvedPath)) {
-      // Also try relative to current directory if launched from backend subdir
+      // Also try relative to current directory if launched from backend subdir or root
       const altPath = path.resolve(process.cwd(), path.basename(accountPathEnv));
+      const backendPath = path.resolve(process.cwd(), 'backend', path.basename(accountPathEnv));
       if (fs.existsSync(altPath)) {
         resolvedPath = altPath;
+      } else if (fs.existsSync(backendPath)) {
+        resolvedPath = backendPath;
       }
     }
 

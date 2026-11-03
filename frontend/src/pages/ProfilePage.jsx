@@ -3,9 +3,11 @@ import { motion } from 'framer-motion';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import UserAvatar from '../components/UserAvatar';
 import {
   User,
   Mail,
+  Phone,
   School,
   GraduationCap,
   BookOpen,
@@ -21,7 +23,10 @@ import {
   Clock,
   Globe,
   Tag,
-  AlertCircle
+  AlertCircle,
+  ExternalLink,
+  Lock,
+  Share2
 } from 'lucide-react';
 
 const LOOKING_FOR_OPTIONS = [
@@ -53,7 +58,7 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // Form State
+  // Form State - Academic & Identity
   const [displayName, setDisplayName] = useState('');
   const [university, setUniversity] = useState('');
   const [program, setProgram] = useState('');
@@ -68,6 +73,19 @@ export default function ProfilePage() {
   const [languagePreference, setLanguagePreference] = useState('en');
   const [availability, setAvailability] = useState('Flexible');
   const [isProfileHidden, setIsProfileHidden] = useState(false);
+
+  // Form State - Contact & Privacy
+  const [contactEmail, setContactEmail] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [shareContactWithConnections, setShareContactWithConnections] = useState(false);
+
+  // Form State - Research & External Links
+  const [scholarUrl, setScholarUrl] = useState('');
+  const [researchGateUrl, setResearchGateUrl] = useState('');
+  const [orcidUrl, setOrcidUrl] = useState('');
+  const [linkedinUrl, setLinkedinUrl] = useState('');
+  const [githubUrl, setGithubUrl] = useState('');
+  const [websiteUrl, setWebsiteUrl] = useState('');
 
   // Load User Profile
   useEffect(() => {
@@ -90,11 +108,23 @@ export default function ProfilePage() {
           setLanguagePreference(u.languagePreference || 'en');
           setAvailability(u.availability || 'Flexible');
           setIsProfileHidden(Boolean(u.isProfileHidden));
+
+          // Contact details & sharing
+          setContactEmail(u.contactEmail || '');
+          setPhoneNumber(u.phoneNumber || '');
+          setShareContactWithConnections(Boolean(u.shareContactWithConnections));
+
+          // Research links
+          setScholarUrl(u.scholarUrl || '');
+          setResearchGateUrl(u.researchGateUrl || '');
+          setOrcidUrl(u.orcidUrl || '');
+          setLinkedinUrl(u.linkedinUrl || '');
+          setGithubUrl(u.githubUrl || '');
+          setWebsiteUrl(u.websiteUrl || '');
         }
       } catch (err) {
         if (isMounted) {
           console.warn('[ProfilePage] Could not load profile from server:', err);
-          // Fallback to local auth info
           if (currentUser) {
             setDisplayName(currentUser.displayName || (isGuest ? 'Guest Student' : 'Student'));
           }
@@ -148,11 +178,52 @@ export default function ProfilePage() {
     }
   };
 
+  // URL helper validator for UI hints
+  const checkUrlHost = (url, expectedHost) => {
+    if (!url || !url.trim()) return null;
+    try {
+      const u = new URL(url.trim());
+      if (u.protocol !== 'https:') return 'Must start with https://';
+      if (expectedHost) {
+        const host = u.hostname.toLowerCase();
+        if (expectedHost === 'scholar.google.com') {
+          if (!host.includes('scholar.google.')) return 'Must be on scholar.google.com';
+        } else if (host !== expectedHost && !host.endsWith('.' + expectedHost)) {
+          return `Must be on ${expectedHost}`;
+        }
+      }
+      return 'valid';
+    } catch {
+      return 'Invalid URL format (include https://)';
+    }
+  };
+
   // Handle Save
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
     try {
+      // Validate URLs before submitting
+      const links = [
+        { val: scholarUrl, host: 'scholar.google.com', name: 'Google Scholar' },
+        { val: researchGateUrl, host: 'researchgate.net', name: 'ResearchGate' },
+        { val: orcidUrl, host: 'orcid.org', name: 'ORCID' },
+        { val: linkedinUrl, host: 'linkedin.com', name: 'LinkedIn' },
+        { val: githubUrl, host: 'github.com', name: 'GitHub' },
+        { val: websiteUrl, host: null, name: 'Personal Website' }
+      ];
+
+      for (const l of links) {
+        if (l.val && l.val.trim()) {
+          const status = checkUrlHost(l.val, l.host);
+          if (status !== 'valid') {
+            toast.error(`${l.name} URL error: ${status}`);
+            setSaving(false);
+            return;
+          }
+        }
+      }
+
       const payload = {
         displayName: displayName.trim() || 'Student',
         university: university.trim(),
@@ -165,7 +236,20 @@ export default function ProfilePage() {
         lookingFor,
         languagePreference,
         availability,
-        isProfileHidden
+        isProfileHidden,
+
+        // Contact info
+        contactEmail: contactEmail.trim(),
+        phoneNumber: phoneNumber.trim(),
+        shareContactWithConnections,
+
+        // Research links
+        scholarUrl: scholarUrl.trim(),
+        researchGateUrl: researchGateUrl.trim(),
+        orcidUrl: orcidUrl.trim(),
+        linkedinUrl: linkedinUrl.trim(),
+        githubUrl: githubUrl.trim(),
+        websiteUrl: websiteUrl.trim()
       };
 
       const res = await api.updateMe(payload);
@@ -190,47 +274,65 @@ export default function ProfilePage() {
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 space-y-8">
       
-      {/* Header Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="p-2 rounded-xl bg-brand-500/10 text-brand-500">
-              <User className="w-5 h-5" />
-            </span>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-              Student Profile & Collaborator Settings
+      {/* Header Banner with Profile Avatar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-3xl glass-panel shadow-soft border border-slate-200 dark:border-slate-800">
+        <div className="flex items-center gap-4">
+          <UserAvatar
+            user={{
+              photoURL: currentUser?.photoURL,
+              displayName: displayName || currentUser?.displayName
+            }}
+            size="xl"
+            className="ring-4 ring-brand-500/20"
+          />
+          <div>
+            <h1 className="text-xl font-bold text-slate-900 dark:text-white">
+              {displayName || 'Student Profile'}
             </h1>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {university || 'University Student'} {program ? `• ${program}` : ''}
+            </p>
+            <div className="flex items-center gap-2 mt-2">
+              <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-semibold ${
+                isGuest
+                  ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300'
+                  : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
+              }`}>
+                {isGuest ? 'Guest Student' : 'Google Verified Student'}
+              </span>
+              {isProfileHidden && (
+                <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-medium">
+                  Hidden from Discovery
+                </span>
+              )}
+            </div>
           </div>
-          <p className="text-xs sm:text-sm text-slate-500">
-            Manage your academic background, skills, and visibility on the Collaborator Finder.
-          </p>
         </div>
 
-        {/* Guest Warning Pill */}
         {isGuest ? (
           <button
             onClick={() => signInWithGoogle()}
-            className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-xs font-semibold transition-all self-start sm:self-auto"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold shadow-soft transition-all self-start sm:self-auto"
           >
             <LogIn className="w-4 h-4" />
             <span>Sign in with Google</span>
           </button>
         ) : (
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold self-start sm:self-auto">
-            <CheckCircle2 className="w-4 h-4" />
-            <span>Verified Student Account</span>
+          <div className="text-xs text-slate-400 hidden sm:block text-right">
+            <span>Primary Account</span>
+            <p className="font-mono text-[11px] text-slate-600 dark:text-slate-300">{currentUser?.email}</p>
           </div>
         )}
       </div>
 
-      {/* Safety & Minor Privacy Notice */}
+      {/* Safety & Contact Privacy Notice Banner */}
       <div className="p-4 sm:p-5 rounded-3xl bg-indigo-50/70 dark:bg-indigo-950/20 border border-indigo-200/80 dark:border-indigo-800/40 text-xs space-y-2">
         <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-400 font-bold">
           <Shield className="w-4 h-4 shrink-0" />
-          <span>Student Safety & Privacy Guarantee</span>
+          <span>Privacy Guarantee: Phone & Email Protection</span>
         </div>
         <p className="text-slate-600 dark:text-slate-300 leading-relaxed text-[11px] sm:text-xs">
-          Because UniMate is open to collegiate and minor students, <strong>your phone number and email are never shown publicly</strong> anywhere on the platform. All student networking happens exclusively through safe, monitored in-app messaging. Never disclose sensitive financial data or personal address to strangers.
+          Phone and email are shown <strong>only to people you accept</strong>, and <strong>only if you turn sharing on</strong>. They are never shown on your public profile, discover cards, marketplace listings, or to guests.
         </p>
       </div>
 
@@ -342,12 +444,244 @@ export default function ProfilePage() {
               value={bio}
               onChange={(e) => setBio(e.target.value)}
               maxLength={500}
-              placeholder="Tell other students about your academic interests, what projects you are tackling, and what kind of collaboration you enjoy..."
+              placeholder="Tell other students about your academic interests, current study goals, and what kind of collaboration you enjoy..."
               className="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:border-brand-500 transition-colors resize-none leading-relaxed"
             />
             <div className="flex justify-end mt-1 text-[11px] text-slate-400">
               {bio.length} / 500 characters
             </div>
+          </div>
+        </div>
+
+        {/* Private Contact Details & Privacy Toggle */}
+        <div className="p-6 sm:p-8 rounded-3xl glass-panel shadow-soft border border-slate-200 dark:border-slate-800 space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+              <Lock className="w-4 h-4 text-rose-500" />
+              <span>Contact Information (Private by Default)</span>
+            </h2>
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400">
+              Connection Only
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                Contact Email (Optional - not auto-filled from Google)
+              </label>
+              <div className="relative">
+                <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                <input
+                  type="email"
+                  value={contactEmail}
+                  onChange={(e) => setContactEmail(e.target.value)}
+                  placeholder="e.g. tanvir.academic@gmail.com"
+                  className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:border-brand-500 transition-colors"
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">
+                Your preferred email for peer academic communications.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                Phone Number (Optional)
+              </label>
+              <div className="relative">
+                <Phone className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                <input
+                  type="tel"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  placeholder="e.g. +880 1700 000000"
+                  maxLength={30}
+                  className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:border-brand-500 transition-colors"
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">
+                Optional direct phone or WhatsApp contact.
+              </p>
+            </div>
+          </div>
+
+          {/* Contact Sharing Toggle */}
+          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-0.5">
+                <p className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Share2 className="w-3.5 h-3.5 text-brand-500" />
+                  <span>Share contact details with people I have accepted as connections</span>
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  When enabled, students whose connection requests you accept can see your email and phone.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShareContactWithConnections(!shareContactWithConnections)}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  shareContactWithConnections ? 'bg-brand-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    shareContactWithConnections ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Clear Warning on Toggle */}
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-800 dark:text-amber-300 text-[11px] flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
+              <span>
+                <strong>Warning:</strong> Sharing your phone number is your own choice. Only share if you are comfortable and trust your connections. Unaccepted students, marketplace shoppers, and guests can never see this.
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Research Profiles & External Academic Links */}
+        <div className="p-6 sm:p-8 rounded-3xl glass-panel shadow-soft border border-slate-200 dark:border-slate-800 space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+              <Globe className="w-4 h-4 text-indigo-500" />
+              <span>Research Profiles & Academic Portfolios</span>
+            </h2>
+            <span className="text-[10px] text-slate-400">Visible on public card</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            
+            {/* Google Scholar */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Google Scholar URL
+                </label>
+                {scholarUrl && (
+                  <span className={`text-[10px] font-mono ${checkUrlHost(scholarUrl, 'scholar.google.com') === 'valid' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {checkUrlHost(scholarUrl, 'scholar.google.com')}
+                  </span>
+                )}
+              </div>
+              <input
+                type="url"
+                value={scholarUrl}
+                onChange={(e) => setScholarUrl(e.target.value)}
+                placeholder="https://scholar.google.com/citations?user=..."
+                className="w-full px-4 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:border-brand-500 transition-colors font-mono"
+              />
+            </div>
+
+            {/* ResearchGate */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  ResearchGate URL
+                </label>
+                {researchGateUrl && (
+                  <span className={`text-[10px] font-mono ${checkUrlHost(researchGateUrl, 'researchgate.net') === 'valid' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {checkUrlHost(researchGateUrl, 'researchgate.net')}
+                  </span>
+                )}
+              </div>
+              <input
+                type="url"
+                value={researchGateUrl}
+                onChange={(e) => setResearchGateUrl(e.target.value)}
+                placeholder="https://www.researchgate.net/profile/..."
+                className="w-full px-4 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:border-brand-500 transition-colors font-mono"
+              />
+            </div>
+
+            {/* ORCID */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  ORCID URL
+                </label>
+                {orcidUrl && (
+                  <span className={`text-[10px] font-mono ${checkUrlHost(orcidUrl, 'orcid.org') === 'valid' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {checkUrlHost(orcidUrl, 'orcid.org')}
+                  </span>
+                )}
+              </div>
+              <input
+                type="url"
+                value={orcidUrl}
+                onChange={(e) => setOrcidUrl(e.target.value)}
+                placeholder="https://orcid.org/0000-0002-..."
+                className="w-full px-4 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:border-brand-500 transition-colors font-mono"
+              />
+            </div>
+
+            {/* LinkedIn */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  LinkedIn Profile URL
+                </label>
+                {linkedinUrl && (
+                  <span className={`text-[10px] font-mono ${checkUrlHost(linkedinUrl, 'linkedin.com') === 'valid' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {checkUrlHost(linkedinUrl, 'linkedin.com')}
+                  </span>
+                )}
+              </div>
+              <input
+                type="url"
+                value={linkedinUrl}
+                onChange={(e) => setLinkedinUrl(e.target.value)}
+                placeholder="https://www.linkedin.com/in/username"
+                className="w-full px-4 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:border-brand-500 transition-colors font-mono"
+              />
+            </div>
+
+            {/* GitHub */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  GitHub Profile URL
+                </label>
+                {githubUrl && (
+                  <span className={`text-[10px] font-mono ${checkUrlHost(githubUrl, 'github.com') === 'valid' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {checkUrlHost(githubUrl, 'github.com')}
+                  </span>
+                )}
+              </div>
+              <input
+                type="url"
+                value={githubUrl}
+                onChange={(e) => setGithubUrl(e.target.value)}
+                placeholder="https://github.com/username"
+                className="w-full px-4 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:border-brand-500 transition-colors font-mono"
+              />
+            </div>
+
+            {/* Personal Website */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Personal Portfolio / Website URL
+                </label>
+                {websiteUrl && (
+                  <span className={`text-[10px] font-mono ${checkUrlHost(websiteUrl, null) === 'valid' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {checkUrlHost(websiteUrl, null)}
+                  </span>
+                )}
+              </div>
+              <input
+                type="url"
+                value={websiteUrl}
+                onChange={(e) => setWebsiteUrl(e.target.value)}
+                placeholder="https://yourportfolio.me"
+                className="w-full px-4 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs focus:outline-none focus:border-brand-500 transition-colors font-mono"
+              />
+            </div>
+
           </div>
         </div>
 
@@ -359,7 +693,6 @@ export default function ProfilePage() {
           </h2>
 
           <div className="space-y-4">
-            
             {/* Skills Tags */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
@@ -427,7 +760,6 @@ export default function ProfilePage() {
                 )}
               </div>
             </div>
-
           </div>
         </div>
 
@@ -439,7 +771,6 @@ export default function ProfilePage() {
           </h2>
 
           <div className="space-y-4">
-            
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
                 I am looking for:
@@ -460,7 +791,7 @@ export default function ProfilePage() {
                       <input
                         type="checkbox"
                         checked={checked}
-                        onChange={() => {}} // handled by parent div
+                        onChange={() => {}}
                         className="mt-0.5 rounded text-brand-500 focus:ring-brand-500 pointer-events-none"
                       />
                       <div>
@@ -474,7 +805,6 @@ export default function ProfilePage() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-              {/* Availability */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                   Weekly Study Availability
@@ -492,7 +822,6 @@ export default function ProfilePage() {
                 </select>
               </div>
 
-              {/* Language Preference */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                   Study Language Preference
@@ -508,7 +837,6 @@ export default function ProfilePage() {
                 </select>
               </div>
             </div>
-
           </div>
         </div>
 
@@ -576,4 +904,3 @@ export default function ProfilePage() {
     </div>
   );
 }
-

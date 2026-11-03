@@ -1,4 +1,7 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import path from 'path';
+dotenv.config();
+dotenv.config({ path: path.resolve(process.cwd(), 'backend/.env') });
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
