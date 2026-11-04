@@ -1,21 +1,33 @@
 import { auth, isFirebaseConfigured } from '../config/firebase.js';
 import { checkUserRateLimit } from '../ai/client.js';
 
+function extractBearerToken(authHeader) {
+  if (!authHeader || typeof authHeader !== 'string') return null;
+  const trimmed = authHeader.trim();
+  if (!trimmed.toLowerCase().startsWith('bearer ')) return null;
+  const token = trimmed.slice(7).trim();
+  if (!token || token.toLowerCase() === 'undefined' || token.toLowerCase() === 'null') {
+    return null;
+  }
+  return token;
+}
+
 /**
  * Middleware: require authenticated user via Firebase ID token
- * Rule 4: User ID MUST come from verified token, never from body or query.
- * Step 1: Remove silent local fallback for users, marketplace, chat, connections.
- * Dev fallback is allowed ONLY for Study tools when Firebase credentials are not configured.
+ * Returns clean 401 JSON.
+ * In logs: include method, route and reason (missing, malformed, expired), never the token.
  */
 export async function requireAuth(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const token = extractBearerToken(req.headers.authorization);
+
+  if (!token) {
+    const reason = !req.headers.authorization ? 'missing Authorization header' : 'empty or malformed Bearer token';
+    console.warn(`[requireAuth] ${req.method} ${req.originalUrl || req.url} - 401 Unauthorized: ${reason}`);
     return res.status(401).json({
-      error: 'Unauthorized: Missing or malformed Authorization header with Bearer token'
+      error: 'Unauthorized: Missing or invalid authentication token',
+      code: 'AUTH_REQUIRED'
     });
   }
-
-  const token = authHeader.split('Bearer ')[1].trim();
 
   // Test environment helper: allow simulated tokens during automated test runs only
   if (process.env.NODE_ENV === 'test' && token.startsWith('test-token:')) {
@@ -53,15 +65,16 @@ export async function requireAuth(req, res, next) {
       };
       return next();
     } catch (err) {
-      console.warn('[Auth Middleware] Firebase token verification failed:', err.message);
+      const reason = err.code === 'auth/id-token-expired' ? 'expired' : 'malformed/invalid';
+      console.warn(`[requireAuth] ${req.method} ${req.originalUrl || req.url} - 401 Unauthorized: token ${reason}`);
       return res.status(401).json({
-        error: 'Unauthorized: Invalid or expired Firebase ID token'
+        error: 'Unauthorized: Invalid or expired Firebase ID token',
+        code: 'TOKEN_INVALID'
       });
     }
   }
 
   // 2. If Firebase Admin is NOT configured:
-  // Is this request for study tools?
   const isStudyToolRequest = 
     req.baseUrl.includes('study') ||
     req.path.startsWith('/summarize') ||
@@ -75,14 +88,13 @@ export async function requireAuth(req, res, next) {
     req.path.startsWith('/materials');
 
   if (!isStudyToolRequest) {
-    // Block anything involving users, marketplace, chat, connections
     return res.status(503).json({
       error: 'Firebase Admin credentials not configured on backend. Real authentication is required for user profiles, marketplace, chat, and collaborator connections. Please provide FIREBASE_SERVICE_ACCOUNT_PATH or Firebase credentials in backend/.env.',
       code: 'FIREBASE_NOT_CONFIGURED'
     });
   }
 
-  // Clearly labelled development fallback ONLY for study tools
+  // Development fallback ONLY for study tools
   try {
     let uid = 'dev_study_guest';
     let isAnonymous = true;
@@ -106,9 +118,86 @@ export async function requireAuth(req, res, next) {
     return next();
   } catch (parseErr) {
     return res.status(401).json({
-      error: 'Unauthorized: Unable to verify authentication credentials'
+      error: 'Unauthorized: Unable to verify authentication credentials',
+      code: 'AUTH_FAILED'
     });
   }
+}
+
+/**
+ * Middleware: optional authentication for public GET routes
+ * (past questions list/detail, marketplace browse, collaborator discover, health).
+ * - A valid token attaches req.user.
+ * - Missing or malformed token continues as anonymous (req.user = null) and NEVER returns 401.
+ * - In logs: include method, route and reason (missing, malformed, expired), never the token.
+ */
+export async function optionalAuth(req, res, next) {
+  req.user = null;
+  const token = extractBearerToken(req.headers.authorization);
+
+  if (!token) {
+    // Missing or empty Bearer token: continue as anonymous without error
+    return next();
+  }
+
+  // Test environment helper
+  if (process.env.NODE_ENV === 'test' && token.startsWith('test-token:')) {
+    const parts = token.split(':');
+    const uid = parts[1];
+    const isAnonymous = parts[2] === 'guest';
+    const displayName = parts[3] || (isAnonymous ? 'Guest Student' : 'Student');
+    const photoURL = parts.slice(4).join(':') || null;
+    req.user = {
+      uid,
+      email: isAnonymous ? null : `${uid}@campus.ac.bd`,
+      displayName,
+      photoURL,
+      isAnonymous,
+      isDevFallback: false
+    };
+    return next();
+  }
+
+  // Real Firebase Admin verification
+  if (isFirebaseConfigured && auth) {
+    try {
+      const decoded = await auth.verifyIdToken(token);
+      const isAnonymous = 
+        decoded.firebase?.sign_in_provider === 'anonymous' ||
+        decoded.provider_id === 'anonymous';
+
+      req.user = {
+        uid: decoded.uid,
+        email: decoded.email || null,
+        displayName: decoded.name || (isAnonymous ? 'Guest Student' : 'Student'),
+        photoURL: decoded.picture || null,
+        isAnonymous: Boolean(isAnonymous),
+        isDevFallback: false
+      };
+      return next();
+    } catch (err) {
+      const reason = err.code === 'auth/id-token-expired' ? 'expired' : 'malformed/invalid';
+      console.log(`[optionalAuth] ${req.method} ${req.originalUrl || req.url} - Token ${reason}, continuing as anonymous student`);
+      req.user = null;
+      return next();
+    }
+  }
+
+  // Development fallback
+  if (token.startsWith('dev-guest:') || token === 'guest-token' || token.startsWith('dev-user:')) {
+    const isAnonymous = !token.startsWith('dev-user:');
+    const uid = token.startsWith('dev-guest:') ? token.split('dev-guest:')[1] : token.startsWith('dev-user:') ? token.split('dev-user:')[1] : 'guest_anon_12345';
+    req.user = {
+      uid,
+      email: isAnonymous ? null : `${uid}@campus.ac.bd`,
+      displayName: isAnonymous ? 'Guest Student' : 'Student',
+      photoURL: null,
+      isAnonymous,
+      isDevFallback: true
+    };
+  }
+
+  return next();
 }
 
 /**
@@ -116,7 +205,7 @@ export async function requireAuth(req, res, next) {
  */
 export function requireNonAnonymous(req, res, next) {
   if (!req.user) {
-    return res.status(401).json({ error: 'Unauthorized: Authentication required' });
+    return res.status(401).json({ error: 'Unauthorized: Authentication required', code: 'AUTH_REQUIRED' });
   }
 
   if (req.user.isAnonymous || req.user.isDevFallback) {

@@ -1,5 +1,5 @@
 import express from 'express';
-import { requireAuth, requireNonAnonymous } from '../middleware/auth.js';
+import { requireAuth, optionalAuth, requireNonAnonymous } from '../middleware/auth.js';
 import { sanitizePublicProfile } from './auth.js';
 import { db } from '../services/db.js';
 import {
@@ -30,16 +30,23 @@ const router = express.Router();
  * GET /api/listings
  * Browse & filter listings (Guests can browse read-only)
  */
-router.get('/listings', async (req, res) => {
+router.get('/listings', optionalAuth, async (req, res) => {
   try {
     const { search, tags, condition, university, minPrice, maxPrice } = req.query;
+
+    const cleanParam = (val) => {
+      if (val === undefined || val === null) return undefined;
+      const s = String(val).trim();
+      return (s === '' || s.toLowerCase() === 'undefined' || s.toLowerCase() === 'null') ? undefined : s;
+    };
+
     const listings = await db.getListings({
-      search,
+      search: cleanParam(search),
       tags: tags ? tags.split(',') : undefined,
-      condition,
-      university,
-      minPrice,
-      maxPrice,
+      condition: cleanParam(condition),
+      university: cleanParam(university),
+      minPrice: cleanParam(minPrice),
+      maxPrice: cleanParam(maxPrice),
       status: 'active'
     });
     res.json({ status: 'success', listings });
@@ -243,35 +250,46 @@ router.delete('/listings/:id', requireAuth, requireNonAnonymous, async (req, res
  * GET /api/partners/discover
  * Discover peer profiles with AI match ranking & "why this match"
  */
-router.get('/partners/discover', requireAuth, async (req, res) => {
+router.get('/partners/discover', optionalAuth, async (req, res) => {
   try {
     const { university, lookingFor, skill } = req.query;
-    const candidates = await db.getDiscoverableProfiles(req.user.uid, {
-      university,
-      lookingFor,
-      skill
+
+    const cleanParam = (val) => {
+      if (val === undefined || val === null) return undefined;
+      const s = String(val).trim();
+      return (s === '' || s.toLowerCase() === 'undefined' || s.toLowerCase() === 'null') ? undefined : s;
+    };
+
+    const currentUid = req.user?.uid || null;
+
+    const candidates = await db.getDiscoverableProfiles(currentUid, {
+      university: cleanParam(university),
+      lookingFor: cleanParam(lookingFor),
+      skill: cleanParam(skill)
     });
 
-    // Fetch user profile and weak topics if available
+    // Fetch user profile and weak topics if user is authenticated
     let userProfile = null;
     let weakTopics = [];
-    try {
-      userProfile = await db.getUser(req.user.uid);
-      const attempts = await db.getAttempts(req.user.uid);
-      const stats = {};
-      attempts.forEach(a => {
-        if (a.topicStats) {
-          Object.entries(a.topicStats).forEach(([t, s]) => {
-            if (!stats[t]) stats[t] = { total: 0, correct: 0 };
-            stats[t].total += s.total || 0;
-            stats[t].correct += s.correct || 0;
-          });
-        }
-      });
-      weakTopics = Object.entries(stats)
-        .filter(([_, s]) => s.total > 0 && (s.correct / s.total) < 0.6)
-        .map(([t]) => t);
-    } catch {}
+    if (currentUid) {
+      try {
+        userProfile = await db.getUser(currentUid);
+        const attempts = await db.getAttempts(currentUid);
+        const stats = {};
+        attempts.forEach(a => {
+          if (a.topicStats) {
+            Object.entries(a.topicStats).forEach(([t, s]) => {
+              if (!stats[t]) stats[t] = { total: 0, correct: 0 };
+              stats[t].total += s.total || 0;
+              stats[t].correct += s.correct || 0;
+            });
+          }
+        });
+        weakTopics = Object.entries(stats)
+          .filter(([_, s]) => s.total > 0 && (s.correct / s.total) < 0.6)
+          .map(([t]) => t);
+      } catch {}
+    }
 
     // AI Ranks candidate profiles with "why this match"
     const ranked = await aiRankCollaborators({

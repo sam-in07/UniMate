@@ -137,7 +137,8 @@ export const pastQuestionSubmitSchema = z.object({
   topics: z.array(z.string()).optional(),
   fileUrl: z.string().optional().nullable(),
   fileName: z.string().max(255).optional().nullable(),
-  fileSize: z.number().optional().nullable()
+  fileSize: z.number().optional().nullable(),
+  textReadable: z.boolean().optional()
 }).refine(data => (data.questionsText && data.questionsText.trim().length >= 10) || data.fileUrl || data.fileName, {
   message: 'Please provide either question text (at least 10 characters) or attach a file.'
 });

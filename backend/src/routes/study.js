@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
 import pdfParse from 'pdf-parse';
-import { requireAuth, aiRateLimiter } from '../middleware/auth.js';
+import { requireAuth, optionalAuth, aiRateLimiter } from '../middleware/auth.js';
 import { generateAI, transcribeImageWithVision } from '../ai/client.js';
 import { db } from '../services/db.js';
 import {
@@ -566,12 +566,25 @@ router.get('/progress', requireAuth, async (req, res) => {
 });
 
 /**
- * Past Questions Library
+ * Past Questions Library (Public browse: guests and authenticated students)
  */
-router.get('/past-questions', requireAuth, async (req, res) => {
+router.get('/past-questions', optionalAuth, async (req, res) => {
   try {
     const { course, university, year, search } = req.query;
-    const questions = await db.getPastQuestions({ course, university, year, search });
+
+    const cleanParam = (val) => {
+      if (val === undefined || val === null) return undefined;
+      const s = String(val).trim();
+      return (s === '' || s.toLowerCase() === 'undefined' || s.toLowerCase() === 'null') ? undefined : s;
+    };
+
+    const questions = await db.getPastQuestions({
+      course: cleanParam(course),
+      university: cleanParam(university),
+      year: cleanParam(year),
+      search: cleanParam(search)
+    });
+
     res.json({
       status: 'success',
       notice: 'Community student-contributed content. Not official university papers.',
@@ -727,7 +740,7 @@ router.post('/past-questions/extract-file', requireAuth, (req, res, next) => {
  * GET /api/past-questions/files/:filename
  * Secure streaming of uploaded question papers
  */
-router.get('/past-questions/files/:filename', (req, res) => {
+router.get('/past-questions/files/:filename', optionalAuth, (req, res) => {
   try {
     const filename = path.basename(req.params.filename);
     const filePath = path.join(PAST_QUESTIONS_DIR, filename);
@@ -753,27 +766,61 @@ router.get('/past-questions/files/:filename', (req, res) => {
   }
 });
 
+const WATERMARK_REGEX = /\b(camscanner|scanned\s+(with|by)\s+camscanner|tapscanner|adobe\s+scan|wps\s+office|docscanner|clearscan)\b/gi;
+
+function checkTextReadability(rawText) {
+  if (!rawText || typeof rawText !== 'string') {
+    return { isReadable: false, cleanedText: '', meaningfulLength: 0 };
+  }
+
+  // Strip scanner watermarks
+  const stripped = rawText.replace(WATERMARK_REGEX, ' ');
+  const meaningfulChars = stripped.replace(/[^a-zA-Z0-9]/g, '');
+  const meaningfulLength = meaningfulChars.length;
+
+  const rawMeaningful = rawText.replace(/[^a-zA-Z0-9]/g, '').length;
+  const isWatermarkOnly = rawMeaningful > 0 && meaningfulLength < 15;
+
+  const isReadable = meaningfulLength >= 100 && !isWatermarkOnly;
+  const cleanedText = isWatermarkOnly ? '' : stripped.replace(/[ \t]+/g, ' ').trim();
+
+  return { isReadable, cleanedText, meaningfulLength };
+}
+
 router.post('/past-questions', requireAuth, async (req, res) => {
   try {
     const data = pastQuestionSubmitSchema.parse(req.body);
 
-    // AI auto-tags topics from questions text
-    let tags = data.topics || [];
-    if (!tags || tags.length === 0) {
+    const { isReadable, cleanedText } = checkTextReadability(data.questionsText);
+    const textReadable = data.questionsText ? isReadable : (data.fileUrl ? false : true);
+
+    // Never store watermark text as questionsText
+    const safeQuestionsText = cleanedText;
+
+    let tags = Array.isArray(data.topics) ? data.topics.filter(Boolean) : [];
+
+    // If text is readable and has >= 100 meaningful characters, call AI for tagging
+    if (isReadable && tags.length === 0 && safeQuestionsText.length >= 100) {
       try {
         const aiTagResult = await generateAI({
-          system: 'Extract 3-5 concise subject topic tags from this exam question paper. Return JSON: { "tags": ["tag1", "tag2"] }',
-          messages: [{ role: 'user', content: data.questionsText }],
+          system: 'You are an academic topic tagger. Analyze the exam question text and return ONLY valid JSON: { "topics": ["topic1", "topic2"] }. If the text does not contain usable exam questions or is unreadable, return { "topics": [] }. Output raw JSON only.',
+          messages: [{ role: 'user', content: safeQuestionsText.slice(0, 4000) }],
           json: true
         });
-        tags = aiTagResult.data?.tags || ['General Exam'];
+        const returnedTopics = aiTagResult.data?.topics || aiTagResult.data?.tags || [];
+        tags = Array.isArray(returnedTopics) ? returnedTopics.filter(Boolean) : [];
       } catch (tagErr) {
-        tags = [data.course];
+        console.warn('[Past Questions] AI topic tagging failed, proceeding with empty topics:', tagErr.message);
+        tags = [];
       }
+    } else if (!isReadable) {
+      tags = [];
     }
 
     const created = await db.createPastQuestion(req.user.uid, {
       ...data,
+      questionsText: safeQuestionsText,
+      textReadable,
       topics: tags
     });
 

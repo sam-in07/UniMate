@@ -27,26 +27,50 @@ export default function Navbar({ onOpenCommandPalette }) {
   const location = useLocation();
 
   useEffect(() => {
-    if (isAuthenticated) {
-      api.getNotifications()
-        .then(res => {
-          if (res && res.unreadCount !== undefined) {
-            setUnreadCount(res.unreadCount);
-          }
-        })
-        .catch(() => {});
-      
-      const interval = setInterval(() => {
-        api.getNotifications()
-          .then(res => {
-            if (res && res.unreadCount !== undefined) {
-              setUnreadCount(res.unreadCount);
-            }
-          })
-          .catch(() => {});
-      }, 30000); // poll every 30s
-      return () => clearInterval(interval);
+    if (!isAuthenticated) {
+      setUnreadCount(0);
+      return;
     }
+
+    let lastFetched = 0;
+    let isMounted = true;
+
+    const fetchUnread = async () => {
+      // Pause if tab is hidden
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+      try {
+        const res = await api.getNotifications();
+        if (isMounted && res && res.unreadCount !== undefined) {
+          setUnreadCount(res.unreadCount);
+          lastFetched = Date.now();
+        }
+      } catch {
+        // quiet failure
+      }
+    };
+
+    fetchUnread();
+
+    // Poll at most every 60 seconds
+    const interval = setInterval(() => {
+      fetchUnread();
+    }, 60000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastFetched > 60000) {
+        fetchUnread();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [isAuthenticated]);
 
   return (

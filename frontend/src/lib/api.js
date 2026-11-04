@@ -6,31 +6,81 @@ export function setTokenProvider(fn) {
   tokenProvider = fn;
 }
 
-export async function apiRequest(endpoint, options = {}) {
+/**
+ * Resolves a stored file or image path into a full URL.
+ * If fileUrl starts with http:// or https://, returns it unchanged.
+ * Otherwise joins it to the backend origin (VITE_API_BASE_URL with trailing /api removed)
+ * without duplicating /api.
+ */
+export function resolveFileUrl(fileUrl) {
+  if (!fileUrl || typeof fileUrl !== 'string') return '';
+  const trimmed = fileUrl.trim();
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  const rawBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api';
+  const backendOrigin = rawBase.replace(/\/api\/?$/i, '').replace(/\/+$/, '');
+  const cleanPath = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+  return `${backendOrigin}${cleanPath}`;
+}
+
+/**
+ * Builds query strings including ONLY params that are defined, non-null, and non-empty after trim.
+ * Never includes "undefined" or "null".
+ */
+export function buildQueryString(params = {}) {
+  if (!params || typeof params !== 'object') return '';
+  const cleanParams = new URLSearchParams();
+  for (const [key, val] of Object.entries(params)) {
+    if (val === undefined || val === null) continue;
+    const str = String(val).trim();
+    if (str === '' || str.toLowerCase() === 'undefined' || str.toLowerCase() === 'null') continue;
+    cleanParams.append(key, str);
+  }
+  const qs = cleanParams.toString();
+  return qs ? `?${qs}` : '';
+}
+
+export async function apiRequest(endpoint, options = {}, isRetry = false) {
   const url = `${API_BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
   const headers = {
     ...(options.headers || {})
   };
 
+  // Only attach Authorization header if a valid token is returned
   if (tokenProvider) {
     try {
-      const token = await tokenProvider();
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
+      const token = await tokenProvider(isRetry);
+      if (typeof token === 'string') {
+        const clean = token.trim();
+        if (clean && clean !== 'undefined' && clean !== 'null') {
+          headers['Authorization'] = `Bearer ${clean}`;
+        }
       }
     } catch (e) {
-      console.warn('[API Client] Could not retrieve ID token:', e);
+      // Do not attach empty or undefined Authorization header
     }
   }
 
   // Auto-detect JSON payload vs FormData
-  if (!(options.body instanceof FormData) && options.body && typeof options.body === 'object') {
+  let body = options.body;
+  if (!(body instanceof FormData) && body && typeof body === 'object') {
     headers['Content-Type'] = 'application/json';
-    options.body = JSON.stringify(options.body);
+    body = JSON.stringify(body);
   }
 
   try {
-    const res = await fetch(url, { ...options, headers });
+    const res = await fetch(url, { ...options, headers, body });
+
+    // Retry once with a force-refreshed token on 401
+    if (res.status === 401 && !isRetry && tokenProvider) {
+      try {
+        return await apiRequest(endpoint, options, true);
+      } catch (retryErr) {
+        throw retryErr;
+      }
+    }
 
     if (!res.ok) {
       let errorData;
@@ -82,15 +132,12 @@ export const api = {
   generatePlan: (data) => apiRequest('/plan/generate', { method: 'POST', body: data }),
 
   // Library & Progress
-  getLibrary: () => apiRequest('/library'),
+  getLibrary: (params = {}) => apiRequest(`/library${buildQueryString(params)}`),
   deleteMaterial: (id) => apiRequest(`/materials/${id}`, { method: 'DELETE' }),
   getProgress: () => apiRequest('/progress'),
 
   // Past Questions & Safety
-  getPastQuestions: (params = {}) => {
-    const query = new URLSearchParams(params).toString();
-    return apiRequest(`/past-questions${query ? `?${query}` : ''}`);
-  },
+  getPastQuestions: (params = {}) => apiRequest(`/past-questions${buildQueryString(params)}`),
   submitPastQuestion: (data) => apiRequest('/past-questions', { method: 'POST', body: data }),
   extractPastQuestionFile: (file) => {
     const formData = new FormData();
@@ -105,14 +152,7 @@ export const api = {
   blockUser: (blockedUid) => apiRequest('/blocks', { method: 'POST', body: { blockedUid } }),
 
   // Student Network: Used-Book Marketplace
-  getListings: (params = {}) => {
-    const cleanParams = {};
-    Object.entries(params).forEach(([k, v]) => {
-      if (v !== undefined && v !== null && v !== '') cleanParams[k] = v;
-    });
-    const query = new URLSearchParams(cleanParams).toString();
-    return apiRequest(`/listings${query ? `?${query}` : ''}`);
-  },
+  getListings: (params = {}) => apiRequest(`/listings${buildQueryString(params)}`),
   getListing: (id) => apiRequest(`/listings/${id}`),
   createListing: (data) => apiRequest('/listings', { method: 'POST', body: data }),
   updateListing: (id, data) => apiRequest(`/listings/${id}`, { method: 'PUT', body: data }),
@@ -122,26 +162,18 @@ export const api = {
   semanticSearchListings: (query) => apiRequest('/listings/search', { method: 'POST', body: { query } }),
 
   // Student Network: Collaborator Finder & Connections
-  discoverPartners: (params = {}) => {
-    const cleanParams = {};
-    Object.entries(params).forEach(([k, v]) => {
-      if (v !== undefined && v !== null && v !== '') cleanParams[k] = v;
-    });
-    const query = new URLSearchParams(cleanParams).toString();
-    return apiRequest(`/partners/discover${query ? `?${query}` : ''}`);
-  },
+  discoverPartners: (params = {}) => apiRequest(`/partners/discover${buildQueryString(params)}`),
   sendConnection: (data) => apiRequest('/connections', { method: 'POST', body: data }),
-  getConnections: () => apiRequest('/connections'),
+  getConnections: (params = {}) => apiRequest(`/connections${buildQueryString(params)}`),
   updateConnection: (id, status) => apiRequest(`/connections/${id}`, { method: 'PUT', body: { status } }),
 
   // Student Network: In-App Chat
-  getChats: () => apiRequest('/chats'),
+  getChats: (params = {}) => apiRequest(`/chats${buildQueryString(params)}`),
   openChat: (data) => apiRequest('/chats', { method: 'POST', body: data }),
   getChatMessages: (chatId) => apiRequest(`/chats/${chatId}/messages`),
   sendMessage: (chatId, text) => apiRequest(`/chats/${chatId}/messages`, { method: 'POST', body: { text } }),
 
   // Student Network: Notifications
-  getNotifications: () => apiRequest('/notifications'),
+  getNotifications: (params = {}) => apiRequest(`/notifications${buildQueryString(params)}`),
   markNotificationRead: (id) => apiRequest(`/notifications/${id}/read`, { method: 'PUT' })
 };
-

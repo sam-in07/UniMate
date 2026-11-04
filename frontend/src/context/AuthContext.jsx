@@ -9,6 +9,11 @@ import {
 import { onAuthStateChanged } from 'firebase/auth';
 import { setTokenProvider, api } from '../lib/api.js';
 
+let resolveAuthReady;
+const authReadyPromise = new Promise(resolve => {
+  resolveAuthReady = resolve;
+});
+
 const AuthContext = createContext();
 
 export function AuthProvider({ children }) {
@@ -31,21 +36,35 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    // Configure API token getter
-    setTokenProvider(async () => {
+    // Configure API token getter: waits for auth state to resolve, gets ID token per request
+    setTokenProvider(async (forceRefresh = false) => {
+      await Promise.race([
+        authReadyPromise,
+        new Promise(r => setTimeout(r, 2500))
+      ]);
+
       if (auth && auth.currentUser) {
-        return await auth.currentUser.getIdToken();
+        try {
+          return await auth.currentUser.getIdToken(forceRefresh);
+        } catch {
+          return null;
+        }
       }
       const devUser = localStorage.getItem('unimate_dev_user');
       if (devUser) {
-        const parsed = JSON.parse(devUser);
-        return parsed.isAnonymous ? `dev-guest:${parsed.uid}` : `dev-user:${parsed.uid}`;
+        try {
+          const parsed = JSON.parse(devUser);
+          return parsed.isAnonymous ? `dev-guest:${parsed.uid}` : `dev-user:${parsed.uid}`;
+        } catch {
+          return null;
+        }
       }
       return null;
     });
 
     if (isFirebaseConfigured && auth) {
       const unsubscribe = onAuthStateChanged(auth, async (user) => {
+        resolveAuthReady(user);
         setCurrentUser(user);
         if (user) {
           await syncProfile();
@@ -56,6 +75,7 @@ export function AuthProvider({ children }) {
       });
       return unsubscribe;
     } else {
+      resolveAuthReady(null);
       // Local development fallback
       const storedDevUser = localStorage.getItem('unimate_dev_user');
       if (storedDevUser) {

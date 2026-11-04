@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { resolveFileUrl } from '../lib/api';
 
 const GRADIENTS = [
   'from-indigo-500 to-purple-600',
@@ -45,7 +46,8 @@ export default function UserAvatar({
 }) {
   const [imgError, setImgError] = useState(false);
 
-  const photoURL = src || user?.photoURL;
+  const rawPhoto = src || user?.photoURL;
+  const photoURL = rawPhoto ? resolveFileUrl(rawPhoto) : '';
   const displayName = name || user?.displayName || user?.name || 'Student';
   const sizeClass = SIZE_CLASSES[size] || SIZE_CLASSES.md;
   const initials = getInitials(displayName);

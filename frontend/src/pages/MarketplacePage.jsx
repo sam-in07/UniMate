@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { api } from '../lib/api';
+import { api, resolveFileUrl } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import UserAvatar from '../components/UserAvatar';
@@ -414,7 +414,7 @@ export default function MarketplacePage() {
                 <div className="w-full h-44 rounded-2xl bg-slate-100 dark:bg-slate-800 overflow-hidden relative mb-4">
                   {item.photos?.[0] ? (
                     <img
-                      src={item.photos[0]}
+                      src={resolveFileUrl(item.photos[0])}
                       alt={item.title}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
@@ -523,7 +523,7 @@ export default function MarketplacePage() {
               <div>
                 <div className="w-full h-56 rounded-2xl bg-slate-100 dark:bg-slate-800 overflow-hidden mb-3">
                   {activeListing.photos?.[0] ? (
-                    <img src={activeListing.photos[0]} alt={activeListing.title} className="w-full h-full object-cover" />
+                    <img src={resolveFileUrl(activeListing.photos[0])} alt={activeListing.title} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-slate-400">
                       <BookOpen className="w-12 h-12 opacity-40" />

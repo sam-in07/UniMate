@@ -63,22 +63,30 @@ export const db = {
       const snap = await query.get();
       let list = snap.docs
         .map(d => ({ uid: d.id, ...d.data() }))
-        .filter(u => u.uid !== currentUid && !u.isProfileHidden);
+        .filter(u => (!currentUid || u.uid !== currentUid) && !u.isProfileHidden);
 
-      if (university) {
-        const uLower = university.toLowerCase();
-        list = list.filter(u => u.university && u.university.toLowerCase().includes(uLower));
+      const cleanParam = (val) => {
+        if (val === undefined || val === null) return null;
+        const s = String(val).trim();
+        return (s === '' || s.toLowerCase() === 'undefined' || s.toLowerCase() === 'null') ? null : s;
+      };
+
+      const cUni = cleanParam(university)?.toLowerCase();
+      const cLookingFor = cleanParam(lookingFor);
+      const cSkill = cleanParam(skill)?.toLowerCase();
+
+      if (cUni) {
+        list = list.filter(u => u.university && u.university.toLowerCase().includes(cUni));
       }
 
-      if (lookingFor) {
-        list = list.filter(u => u.lookingFor && u.lookingFor.includes(lookingFor));
+      if (cLookingFor) {
+        list = list.filter(u => u.lookingFor && u.lookingFor.includes(cLookingFor));
       }
 
-      if (skill) {
-        const sLower = skill.toLowerCase();
+      if (cSkill) {
         list = list.filter(u => 
-          u.skills?.some(s => s.toLowerCase().includes(sLower)) ||
-          u.interests?.some(i => i.toLowerCase().includes(sLower))
+          u.skills?.some(s => s && s.toLowerCase().includes(cSkill)) ||
+          u.interests?.some(i => i && i.toLowerCase().includes(cSkill))
         );
       }
 
@@ -122,39 +130,56 @@ export const db = {
 
       let list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
+      const cleanParam = (val) => {
+        if (val === undefined || val === null) return null;
+        const s = String(val).trim();
+        return (s === '' || s.toLowerCase() === 'undefined' || s.toLowerCase() === 'null') ? null : s;
+      };
+
+      const cSearch = cleanParam(search)?.toLowerCase();
+      const cCondition = cleanParam(condition);
+      const cUni = cleanParam(university)?.toLowerCase();
+      const cMin = cleanParam(minPrice);
+      const cMax = cleanParam(maxPrice);
+
       // Client-side filtering
-      if (search) {
-        const query = search.toLowerCase();
+      if (cSearch) {
         list = list.filter(item =>
-          item.title?.toLowerCase().includes(query) ||
-          item.author?.toLowerCase().includes(query) ||
-          item.description?.toLowerCase().includes(query) ||
-          item.tags?.some(t => t.toLowerCase().includes(query))
+          item.title?.toLowerCase().includes(cSearch) ||
+          item.author?.toLowerCase().includes(cSearch) ||
+          item.description?.toLowerCase().includes(cSearch) ||
+          item.tags?.some(t => t.toLowerCase().includes(cSearch))
         );
       }
 
       if (tags && tags.length > 0) {
-        const tagList = Array.isArray(tags) ? tags : [tags];
-        list = list.filter(item =>
-          item.tags?.some(t => tagList.some(reqTag => reqTag.toLowerCase() === t.toLowerCase()))
-        );
+        const rawTags = Array.isArray(tags) ? tags : [tags];
+        const tagList = rawTags
+          .map(cleanParam)
+          .filter(Boolean)
+          .map(t => t.toLowerCase());
+
+        if (tagList.length > 0) {
+          list = list.filter(item =>
+            item.tags?.some(t => tagList.some(reqTag => reqTag === t.toLowerCase()))
+          );
+        }
       }
 
-      if (condition) {
-        list = list.filter(item => item.condition === condition);
+      if (cCondition) {
+        list = list.filter(item => item.condition?.toLowerCase() === cCondition.toLowerCase());
       }
 
-      if (university) {
-        const uQuery = university.toLowerCase();
-        list = list.filter(item => item.university?.toLowerCase().includes(uQuery));
+      if (cUni) {
+        list = list.filter(item => item.university?.toLowerCase().includes(cUni));
       }
 
-      if (minPrice !== undefined && minPrice !== null) {
-        list = list.filter(item => item.price >= Number(minPrice));
+      if (cMin !== null && !isNaN(Number(cMin))) {
+        list = list.filter(item => item.price >= Number(cMin));
       }
 
-      if (maxPrice !== undefined && maxPrice !== null) {
-        list = list.filter(item => item.price <= Number(maxPrice));
+      if (cMax !== null && !isNaN(Number(cMax))) {
+        list = list.filter(item => item.price <= Number(cMax));
       }
 
       // Sort by createdAt desc
@@ -763,6 +788,9 @@ export const db = {
       id,
       uploaderUid,
       ...data,
+      course: typeof data.course === 'string' ? data.course.trim() : (data.course || ''),
+      university: typeof data.university === 'string' ? data.university.trim() : (data.university || ''),
+      term: typeof data.term === 'string' ? data.term.trim() : (data.term || ''),
       isStudentContributed: true,
       reportCount: 0,
       createdAt: new Date().toISOString()
@@ -775,7 +803,7 @@ export const db = {
     return doc;
   },
 
-  async getPastQuestions({ course, university, year, search }) {
+  async getPastQuestions({ course, university, year, search } = {}) {
     let list = [];
     if (isFirebaseConfigured && firestore) {
       const snap = await firestore.collection('pastQuestions')
@@ -786,21 +814,82 @@ export const db = {
       list = Array.from(studyMemoryStore.pastQuestions.values());
     }
 
-    list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+    // Normalize and clean incoming filter parameters
+    const cleanParam = (val) => {
+      if (val === undefined || val === null) return null;
+      const s = String(val).trim();
+      if (!s || s.toLowerCase() === 'undefined' || s.toLowerCase() === 'null') return null;
+      return s;
+    };
+
+    const cCourse = cleanParam(course)?.toLowerCase();
+    const cUni = cleanParam(university)?.toLowerCase();
+    const cSearch = cleanParam(search)?.toLowerCase();
+    const cYearStr = cleanParam(year);
+    const cYear = cYearStr ? parseInt(cYearStr, 10) : null;
 
     return list.filter(item => {
-      if (course && !item.course.toLowerCase().includes(course.toLowerCase())) return false;
-      if (university && !item.university.toLowerCase().includes(university.toLowerCase())) return false;
-      if (year && item.year !== parseInt(year, 10)) return false;
-      if (search) {
-        const query = search.toLowerCase();
-        const textMatch = item.questionsText?.toLowerCase().includes(query);
-        const courseMatch = item.course?.toLowerCase().includes(query);
-        const uniMatch = item.university?.toLowerCase().includes(query);
-        const tagMatch = item.topics?.some(t => t.toLowerCase().includes(query));
+      if (!item) return false;
+
+      const itemCourse = typeof item.course === 'string' ? item.course.trim().toLowerCase() : '';
+      const itemUni = typeof item.university === 'string' ? item.university.trim().toLowerCase() : '';
+      const itemText = typeof item.questionsText === 'string' ? item.questionsText.trim().toLowerCase() : '';
+      const itemTopics = Array.isArray(item.topics) ? item.topics.map(t => String(t || '').trim().toLowerCase()) : [];
+
+      if (cCourse && !itemCourse.includes(cCourse)) return false;
+      if (cUni && !itemUni.includes(cUni)) return false;
+      if (cYear !== null && !isNaN(cYear) && item.year !== cYear) return false;
+
+      if (cSearch) {
+        const textMatch = itemText.includes(cSearch);
+        const courseMatch = itemCourse.includes(cSearch);
+        const uniMatch = itemUni.includes(cSearch);
+        const tagMatch = itemTopics.some(t => t.includes(cSearch));
         if (!textMatch && !courseMatch && !uniMatch && !tagMatch) return false;
       }
       return true;
     });
+  },
+
+  async migratePastQuestionsWhitespace() {
+    if (!isFirebaseConfigured || !firestore) return 0;
+    try {
+      const snap = await firestore.collection('pastQuestions').get();
+      let updatedCount = 0;
+      const batch = firestore.batch();
+
+      snap.docs.forEach(doc => {
+        const data = doc.data();
+        let changed = false;
+        const updates = {};
+
+        const fieldsToTrim = ['course', 'university', 'term', 'questionsText', 'fileName'];
+        fieldsToTrim.forEach(f => {
+          if (typeof data[f] === 'string') {
+            const trimmed = data[f].trim();
+            if (trimmed !== data[f]) {
+              updates[f] = trimmed;
+              changed = true;
+            }
+          }
+        });
+
+        if (changed) {
+          batch.update(doc.ref, updates);
+          updatedCount++;
+        }
+      });
+
+      if (updatedCount > 0) {
+        await batch.commit();
+        console.log(`[Migration] Trimmed whitespace on ${updatedCount} pastQuestions document(s) in Firestore.`);
+      }
+      return updatedCount;
+    } catch (err) {
+      console.warn('[Migration Warning] Could not migrate pastQuestions whitespace:', err.message);
+      return 0;
+    }
   }
 };

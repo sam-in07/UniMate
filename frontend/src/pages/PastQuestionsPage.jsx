@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { api } from '../lib/api';
+import { api, resolveFileUrl } from '../lib/api';
 import { useToast } from '../context/ToastContext';
 import {
   FileQuestion,
@@ -18,12 +18,14 @@ import {
   UploadCloud,
   FileText,
   Download,
-  Trash2
+  Trash2,
+  RefreshCw
 } from 'lucide-react';
 
 export default function PastQuestionsPage() {
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
   const [search, setSearch] = useState('');
   const [selectedCourse, setSelectedCourse] = useState('');
   const [selectedUniversity, setSelectedUniversity] = useState('');
@@ -58,14 +60,16 @@ export default function PastQuestionsPage() {
 
   const fetchQuestions = async () => {
     setLoading(true);
+    setFetchError(null);
     try {
       const res = await api.getPastQuestions({
-        search: search || undefined,
-        course: selectedCourse || undefined,
-        university: selectedUniversity || undefined
+        search: search.trim() || undefined,
+        course: selectedCourse.trim() || undefined,
+        university: selectedUniversity.trim() || undefined
       });
       setQuestions(res.questions || []);
     } catch (err) {
+      setFetchError(err.message || 'Failed to load past questions bank.');
       toast.error('Failed to load past questions bank.');
     } finally {
       setLoading(false);
@@ -312,6 +316,23 @@ export default function PastQuestionsPage() {
             <div key={n} className="h-44 rounded-3xl bg-slate-200 dark:bg-slate-800" />
           ))}
         </div>
+      ) : fetchError ? (
+        <div className="text-center py-16 glass-panel rounded-3xl border border-rose-200/80 dark:border-rose-900/40 bg-rose-50/20 dark:bg-rose-950/10">
+          <AlertCircle className="w-12 h-12 text-rose-500 mx-auto mb-3" />
+          <h3 className="text-base font-bold text-slate-800 dark:text-slate-200 mb-1">
+            Unable to Load Past Questions
+          </h3>
+          <p className="text-xs text-rose-600 dark:text-rose-400 mb-4 max-w-sm mx-auto">
+            {fetchError}
+          </p>
+          <button
+            onClick={() => fetchQuestions()}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold shadow-sm transition-all cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry</span>
+          </button>
+        </div>
       ) : questions.length === 0 ? (
         <div className="text-center py-16 glass-panel rounded-3xl border border-slate-200 dark:border-slate-800">
           <FileQuestion className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
@@ -342,9 +363,7 @@ export default function PastQuestionsPage() {
               ? item.questionsText 
               : (item.fileName ? `Original paper: ${item.fileName}` : 'Exam questions preview not available.');
 
-            const downloadUrl = item.fileUrl 
-              ? (item.fileUrl.startsWith('http') ? item.fileUrl : `${import.meta.env.VITE_API_BASE_URL || ''}${item.fileUrl}`)
-              : null;
+            const downloadUrl = item.fileUrl ? resolveFileUrl(item.fileUrl) : null;
 
             return (
               <motion.div
@@ -376,19 +395,22 @@ export default function PastQuestionsPage() {
                     </button>
                   </div>
 
-                  {/* AI Topics */}
-                  {Array.isArray(item.topics) && item.topics.filter(Boolean).length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 my-3">
-                      {item.topics.filter(Boolean).map((t, idx) => (
-                        <span
-                          key={idx}
-                          className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-300"
-                        >
-                          #{t}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  {/* Badges & AI Topics */}
+                  <div className="flex flex-wrap items-center gap-1.5 my-3">
+                    {item.textReadable === false && (
+                      <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700">
+                        Text not readable, PDF only
+                      </span>
+                    )}
+                    {Array.isArray(item.topics) && item.topics.filter(Boolean).map((t, idx) => (
+                      <span
+                        key={idx}
+                        className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-300"
+                      >
+                        #{t}
+                      </span>
+                    ))}
+                  </div>
 
                   {/* Excerpt */}
                   <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 text-xs text-slate-600 dark:text-slate-300 line-clamp-4 leading-relaxed font-mono">
